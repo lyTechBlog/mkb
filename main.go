@@ -6,7 +6,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
+	"tos_tool"
+	"viking_db_tool"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
@@ -16,7 +19,7 @@ import (
 )
 
 const (
-	uploadDir = "./uploads"
+	uploadDir   = "./uploads"
 	maxFileSize = 100 << 20 // 100MB
 )
 
@@ -86,7 +89,7 @@ func uploadFile(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	var uploadedFiles []string
+	var uploadedFiles []map[string]interface{}
 	for _, file := range files {
 		// 检查文件大小
 		if file.Size > maxFileSize {
@@ -96,9 +99,9 @@ func uploadFile(ctx context.Context, c *app.RequestContext) {
 			return
 		}
 
-		// 创建目标文件路径
+		// 创建临时文件路径
 		filename := filepath.Base(file.Filename)
-		filepath := filepath.Join(uploadDir, filename)
+		tempFilePath := filepath.Join(uploadDir, filename)
 
 		// 打开源文件
 		src, err := file.Open()
@@ -110,29 +113,78 @@ func uploadFile(ctx context.Context, c *app.RequestContext) {
 		}
 		defer src.Close()
 
-		// 创建目标文件
-		dst, err := os.Create(filepath)
+		// 创建临时文件
+		dst, err := os.Create(tempFilePath)
 		if err != nil {
 			c.JSON(consts.StatusInternalServerError, utils.H{
-				"error": "Failed to create file: " + err.Error(),
+				"error": "Failed to create temporary file: " + err.Error(),
 			})
 			return
 		}
-		defer dst.Close()
 
-		// 复制文件内容
+		// 复制文件内容到临时文件
 		if _, err = io.Copy(dst, src); err != nil {
+			dst.Close()
 			c.JSON(consts.StatusInternalServerError, utils.H{
-				"error": "Failed to save file: " + err.Error(),
+				"error": "Failed to save temporary file: " + err.Error(),
+			})
+			return
+		}
+		dst.Close()
+
+		// 调用TOS上传方法
+		objectKey := fmt.Sprintf("uploads/%s", filename)
+		preSignedURL, err := tos_tool.UploadFileWithEnvConfig(tempFilePath, objectKey)
+		if err != nil {
+			// 清理临时文件
+			os.Remove(tempFilePath)
+			c.JSON(consts.StatusInternalServerError, utils.H{
+				"error": "Failed to upload to TOS: " + err.Error(),
 			})
 			return
 		}
 
-		uploadedFiles = append(uploadedFiles, filename)
+		// 清理临时文件
+		os.Remove(tempFilePath)
+
+		uploadedFiles = append(uploadedFiles, map[string]interface{}{
+			"name": filename,
+			"url":  preSignedURL,
+		})
+
+		// 上传文件到Viking DB
+		resourceID := "kb-bd0872aa77719869"
+		// docID只保留字符和数字以及_和-
+		docID := regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(filename, "")
+		docName := filename
+		docType := "txt"
+		meta := []viking_db_tool.MetaField{
+			viking_db_tool.CreateStringMetaField("行业", "企业服务"),
+		}
+
+		// 上传文件到Viking DB
+		response, err := viking_db_tool.UploadDocumentByURL(
+			ctx,
+			resourceID,
+			docID,
+			docName,
+			docType,
+			preSignedURL,
+			meta,
+		)
+
+		if err != nil {
+			c.JSON(consts.StatusInternalServerError, utils.H{
+				"error": "Failed to upload to Viking DB: " + err.Error(),
+			})
+			return
+		}
+
+		fmt.Printf("Uploaded document to Viking DB: %s\n", response)
 	}
 
 	c.JSON(consts.StatusOK, utils.H{
-		"message": "Files uploaded successfully",
+		"message": "Files uploaded successfully to TOS",
 		"files":   uploadedFiles,
 	})
 }
@@ -178,7 +230,7 @@ func downloadFile(ctx context.Context, c *app.RequestContext) {
 	}
 
 	filepath := filepath.Join(uploadDir, filename)
-	
+
 	// 检查文件是否存在
 	if _, err := os.Stat(filepath); os.IsNotExist(err) {
 		c.JSON(consts.StatusNotFound, utils.H{
@@ -201,7 +253,7 @@ func deleteFile(ctx context.Context, c *app.RequestContext) {
 	}
 
 	filepath := filepath.Join(uploadDir, filename)
-	
+
 	// 检查文件是否存在
 	if _, err := os.Stat(filepath); os.IsNotExist(err) {
 		c.JSON(consts.StatusNotFound, utils.H{
@@ -221,4 +273,4 @@ func deleteFile(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, utils.H{
 		"message": "File deleted successfully",
 	})
-} 
+}

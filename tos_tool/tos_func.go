@@ -1,4 +1,4 @@
-package main
+package tos_tool
 
 import (
 	"context"
@@ -111,9 +111,9 @@ func UploadFileWithEnvConfig(localFilePath, objectKey string) (string, error) {
 	return UploadFile(config, localFilePath, objectKey)
 }
 
-func main() {
-	// Example usage with environment variables
-	preSignedURL, err := UploadFileWithEnvConfig("../README.md", "example_dir/README2.md")
-	checkErr(err)
-	fmt.Printf("Pre-signed URL: %s\n", preSignedURL)
-}
+//func main() {
+//	// Example usage with environment variables
+//	preSignedURL, err := UploadFileWithEnvConfig("../README.md", "example_dir/README2.md")
+//	checkErr(err)
+//	fmt.Printf("Pre-signed URL: %s\n", preSignedURL)
+//}
