@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/volcengine/ve-tos-golang-sdk/v2/tos"
+	"github.com/volcengine/ve-tos-golang-sdk/v2/tos/enum"
 )
 
 // checkErr handles error checking and provides detailed error information
@@ -37,8 +38,8 @@ type UploadConfig struct {
 	BucketName string
 }
 
-// UploadFile uploads a file to TOS
-func UploadFile(config UploadConfig, localFilePath, objectKey string) error {
+// UploadFile uploads a file to TOS and returns a pre-signed URL for the uploaded object
+func UploadFile(config UploadConfig, localFilePath, objectKey string) (string, error) {
 	ctx := context.Background()
 
 	// Initialize TOS client
@@ -46,13 +47,13 @@ func UploadFile(config UploadConfig, localFilePath, objectKey string) error {
 		tos.WithRegion(config.Region),
 		tos.WithCredentials(tos.NewStaticCredentials(config.AccessKey, config.SecretKey)))
 	if err != nil {
-		return fmt.Errorf("failed to create TOS client: %w", err)
+		return "", fmt.Errorf("failed to create TOS client: %w", err)
 	}
 
 	// Open local file
 	file, err := os.Open(localFilePath)
 	if err != nil {
-		return fmt.Errorf("failed to open file %s: %w", localFilePath, err)
+		return "", fmt.Errorf("failed to open file %s: %w", localFilePath, err)
 	}
 	defer file.Close()
 
@@ -65,15 +66,26 @@ func UploadFile(config UploadConfig, localFilePath, objectKey string) error {
 		Content: file,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to upload file: %w", err)
+		return "", fmt.Errorf("failed to upload file: %w", err)
 	}
 
 	fmt.Printf("File uploaded successfully! Request ID: %s\n", output.RequestID)
-	return nil
+
+	// Generate pre-signed URL for the uploaded object
+	preSignedURL, err := client.PreSignedURL(&tos.PreSignedURLInput{
+		HTTPMethod: enum.HttpMethodGet,
+		Bucket:     config.BucketName,
+		Key:        objectKey,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to generate pre-signed URL: %w", err)
+	}
+
+	return preSignedURL.SignedUrl, nil
 }
 
-// UploadFileWithEnvConfig uploads a file using environment variables for configuration
-func UploadFileWithEnvConfig(localFilePath, objectKey string) error {
+// UploadFileWithEnvConfig uploads a file using environment variables for configuration and returns pre-signed URL
+func UploadFileWithEnvConfig(localFilePath, objectKey string) (string, error) {
 	Ak := "AKLTZmRkY2Q1N2ZkZDlhNDIxNWIzNzUzZmRiNzY5ZGYwM2M"
 	Sk := "T1RkaU56WTBPR1k0WldRek5EVTJOV0UwTldNNVptWTBNVEU1WmpWaE5ETQ=="
 	mkb_bucket := "mkb-test"
@@ -87,13 +99,13 @@ func UploadFileWithEnvConfig(localFilePath, objectKey string) error {
 
 	// Validate required environment variables
 	if config.AccessKey == "" {
-		return fmt.Errorf("TOS_ACCESS_KEY environment variable is required")
+		return "", fmt.Errorf("TOS_ACCESS_KEY environment variable is required")
 	}
 	if config.SecretKey == "" {
-		return fmt.Errorf("TOS_SECRET_KEY environment variable is required")
+		return "", fmt.Errorf("TOS_SECRET_KEY environment variable is required")
 	}
 	if config.BucketName == "" {
-		return fmt.Errorf("TOS_BUCKET_NAME environment variable is required")
+		return "", fmt.Errorf("TOS_BUCKET_NAME environment variable is required")
 	}
 
 	return UploadFile(config, localFilePath, objectKey)
@@ -101,6 +113,7 @@ func UploadFileWithEnvConfig(localFilePath, objectKey string) error {
 
 func main() {
 	// Example usage with environment variables
-	err := UploadFileWithEnvConfig("../README.md", "example_dir/README.md")
+	preSignedURL, err := UploadFileWithEnvConfig("../README.md", "example_dir/README2.md")
 	checkErr(err)
+	fmt.Printf("Pre-signed URL: %s\n", preSignedURL)
 }
