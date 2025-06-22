@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 	"tos_tool"
 	"viking_db_tool"
@@ -22,6 +23,47 @@ const (
 	uploadDir   = "./uploads"
 	maxFileSize = 100 << 20 // 100MB
 )
+
+// getDocTypeByExtension 根据文件后缀确定文档类型
+func getDocTypeByExtension(filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+
+	// 非结构化文档支持类型
+	unstructuredTypes := map[string]string{
+		".txt":      "txt",
+		".doc":      "doc",
+		".docx":     "docx",
+		".pdf":      "pdf",
+		".markdown": "markdown",
+		".md":       "markdown",
+		".pptx":     "pptx",
+	}
+
+	// 结构化文档支持类型
+	structuredTypes := map[string]string{
+		".xlsx":  "xlsx",
+		".csv":   "csv",
+		".jsonl": "jsonl",
+	}
+
+	// 特殊处理：faq.xlsx 文件
+	if strings.Contains(strings.ToLower(filename), "faq") && ext == ".xlsx" {
+		return "faq.xlsx"
+	}
+
+	// 先检查非结构化类型
+	if docType, exists := unstructuredTypes[ext]; exists {
+		return docType
+	}
+
+	// 再检查结构化类型
+	if docType, exists := structuredTypes[ext]; exists {
+		return docType
+	}
+
+	// 默认返回 txt
+	return "txt"
+}
 
 func main() {
 	// 创建上传目录
@@ -57,6 +99,7 @@ func main() {
 		api.GET("/files/:filename", downloadFile)
 		api.DELETE("/files/:filename", deleteFile)
 		api.POST("/chat", chatWithKnowledgeBase)
+		api.GET("/documents/status", getDocumentStatus)
 	}
 
 	// 健康检查
@@ -200,7 +243,7 @@ func uploadFile(ctx context.Context, c *app.RequestContext) {
 		// docID只保留字符和数字以及_和-
 		docID := regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(filename, "")
 		docName := filename
-		docType := "txt"
+		docType := getDocTypeByExtension(filename)
 		meta := []viking_db_tool.MetaField{
 			viking_db_tool.CreateStringMetaField("行业", "企业服务"),
 			viking_db_tool.CreateStringMetaField("用户ID", userID),
@@ -319,9 +362,52 @@ func deleteFile(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	c.JSON(consts.StatusOK, utils.H{
-		"message": "File deleted successfully from TOS",
-	})
+	// 检查知识库是否存在
+	knowledgeBaseName := "kb_" + userID
+	project := "default"
+	exists, resourceID, err := viking_db_tool.CheckKnowledgeBaseExists(ctx, knowledgeBaseName, project)
+	if err != nil {
+		// 如果检查知识库存在性失败，记录错误但不影响TOS删除的成功响应
+		fmt.Printf("Failed to check knowledge base existence: %v\n", err)
+		c.JSON(consts.StatusOK, utils.H{
+			"message": "File deleted successfully from TOS, but failed to check knowledge base",
+		})
+		return
+	}
+
+	if exists {
+		// 生成与上传时相同的docID
+		docID := regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(filename, "")
+
+		// 删除知识库中的文档
+		deleteResp, err := viking_db_tool.DeleteDocumentByResourceID(ctx, resourceID, docID)
+		if err != nil {
+			// 如果删除知识库文档失败，记录错误但不影响TOS删除的成功响应
+			fmt.Printf("Failed to delete document from knowledge base: %v\n", err)
+			c.JSON(consts.StatusOK, utils.H{
+				"message": "File deleted successfully from TOS, but failed to delete from knowledge base",
+			})
+			return
+		}
+
+		if deleteResp.Code != 0 {
+			fmt.Printf("Failed to delete document from knowledge base: code %d, message %s\n", deleteResp.Code, deleteResp.Message)
+			c.JSON(consts.StatusOK, utils.H{
+				"message": "File deleted successfully from TOS, but failed to delete from knowledge base",
+			})
+			return
+		}
+
+		fmt.Printf("Successfully deleted document from knowledge base: %s\n", docID)
+		c.JSON(consts.StatusOK, utils.H{
+			"message": "File deleted successfully from both TOS and knowledge base",
+		})
+	} else {
+		// 知识库不存在，只删除TOS文件
+		c.JSON(consts.StatusOK, utils.H{
+			"message": "File deleted successfully from TOS (knowledge base not found)",
+		})
+	}
 }
 
 // 知识库对话处理
@@ -485,5 +571,49 @@ func chatWithKnowledgeBase(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, utils.H{
 		"answer": chatResp.Data.GenerateAnswer,
 		"usage":  chatResp.Data.Usage,
+	})
+}
+
+// 查询文档处理状态
+func getDocumentStatus(ctx context.Context, c *app.RequestContext) {
+	// 获取用户ID参数
+	userID := c.Query("user_id")
+	if userID == "" {
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "User ID is required",
+		})
+		return
+	}
+
+	// 检查知识库是否存在
+	knowledgeBaseName := "kb_" + userID
+	project := "default"
+	exists, resourceID, err := viking_db_tool.CheckKnowledgeBaseExists(ctx, knowledgeBaseName, project)
+	if err != nil {
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "Failed to check knowledge base existence: " + err.Error(),
+		})
+		return
+	}
+
+	if !exists {
+		c.JSON(consts.StatusNotFound, utils.H{
+			"error": "Knowledge base not found",
+		})
+		return
+	}
+
+	// 获取文档处理状态
+	docStatus, err := viking_db_tool.GetDocumentProcessingStatus(ctx, resourceID)
+	if err != nil {
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "Failed to get document status: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(consts.StatusOK, utils.H{
+		"document_status": docStatus,
+		"user_id":         userID,
 	})
 }

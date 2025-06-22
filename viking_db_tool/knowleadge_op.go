@@ -872,6 +872,271 @@ func CheckKnowledgeBaseExists(ctx context.Context, name, project string) (bool, 
 }
 
 /*
+文档列表查询请求参数结构体
+*/
+type DocumentListRequest struct {
+	CollectionName string   `json:"collection_name,omitempty"`
+	Project        string   `json:"project,omitempty"`
+	ResourceID     string   `json:"resource_id,omitempty"`
+	Offset         int      `json:"offset,omitempty"`
+	Limit          int      `json:"limit,omitempty"`
+	DocIDs         []string `json:"doc_ids,omitempty"`
+}
+
+/*
+文档列表查询响应参数结构体
+*/
+type DocumentListResponse struct {
+	Code    int64                     `json:"code"`
+	Message string                    `json:"message,omitempty"`
+	Data    *DocumentListResponseData `json:"data,omitempty"`
+}
+
+type DocumentListResponseData struct {
+	CollectionName string         `json:"collection_name"`
+	TotalNum       int            `json:"total_num"`
+	Count          int            `json:"count"`
+	DocList        []DocumentInfo `json:"doc_list"`
+}
+
+type DocumentInfo struct {
+	CollectionName string                   `json:"collection_name"`
+	DocName        string                   `json:"doc_name"`
+	DocID          string                   `json:"doc_id"`
+	AddType        string                   `json:"add_type"`
+	DocType        string                   `json:"doc_type"`
+	CreateTime     int64                    `json:"create_time"`
+	AddedBy        string                   `json:"added_by"`
+	UpdateTime     int64                    `json:"update_time"`
+	URL            string                   `json:"url,omitempty"`
+	PointNum       int                      `json:"point_num"`
+	Status         DocumentProcessingStatus `json:"status"`
+	TotalTokens    int64                    `json:"total_tokens,omitempty"`
+}
+
+type DocumentPointInfo struct {
+	CollectionName string                   `json:"collection_name"`
+	PointID        string                   `json:"point_id"`
+	ProcessTime    int64                    `json:"process_time"`
+	Content        string                   `json:"content"`
+	ChunkTitle     string                   `json:"chunk_title,omitempty"`
+	DocInfo        DocumentPointInfoDocInfo `json:"doc_info"`
+}
+
+type DocumentPointInfoDocInfo struct {
+	DocID      string `json:"doc_id"`
+	DocName    string `json:"doc_name"`
+	CreateTime int64  `json:"create_time"`
+	DocType    string `json:"doc_type"`
+	DocMeta    string `json:"doc_meta,omitempty"`
+	Source     string `json:"source"`
+	Title      string `json:"title,omitempty"`
+}
+
+const (
+	DocumentListPath = "/api/knowledge/doc/list"
+	DocumentInfoPath = "/api/knowledge/doc/info"
+)
+
+/*
+文档信息查询请求参数结构体
+*/
+type DocumentInfoRequest struct {
+	CollectionName   string `json:"collection_name,omitempty"`
+	Project          string `json:"project,omitempty"`
+	ResourceID       string `json:"resource_id,omitempty"`
+	DocID            string `json:"doc_id"`
+	ReturnTokenUsage bool   `json:"return_token_usage,omitempty"`
+}
+
+/*
+文档信息查询响应参数结构体
+*/
+type DocumentInfoResponse struct {
+	Code    int64                     `json:"code"`
+	Message string                    `json:"message,omitempty"`
+	Data    *DocumentInfoResponseData `json:"data,omitempty"`
+}
+
+type DocumentInfoResponseData struct {
+	CollectionName string                   `json:"collection_name"`
+	DocName        string                   `json:"doc_name"`
+	DocID          string                   `json:"doc_id"`
+	AddType        string                   `json:"add_type"`
+	DocType        string                   `json:"doc_type"`
+	CreateTime     int64                    `json:"create_time"`
+	AddedBy        string                   `json:"added_by"`
+	UpdateTime     int64                    `json:"update_time"`
+	URL            string                   `json:"url,omitempty"`
+	PointNum       int                      `json:"point_num"`
+	Status         DocumentProcessingStatus `json:"status"`
+	TotalTokens    int64                    `json:"total_tokens,omitempty"`
+}
+
+type DocumentProcessingStatus struct {
+	ProcessStatus int `json:"process_status"`
+}
+
+// DocumentStatusInfo 表示文档处理状态的详细信息
+type DocumentStatusInfo struct {
+	DocID         string `json:"doc_id"`
+	DocName       string `json:"doc_name"`
+	ProcessStatus int    `json:"process_status"`
+	StatusText    string `json:"status_text"`
+	IsCompleted   bool   `json:"is_completed"`
+}
+
+// getStatusText 根据process_status返回对应的状态文本
+func getStatusText(status int) string {
+	switch status {
+	case 0:
+		return "处理完成"
+	case 1:
+		return "处理失败"
+	case 2, 3:
+		return "排队中"
+	case 5:
+		return "删除中"
+	case 6:
+		return "处理中"
+	default:
+		return "未知状态"
+	}
+}
+
+/*
+查询单个文档信息
+*/
+func GetDocumentInfo(ctx context.Context, req DocumentInfoRequest) (*DocumentInfoResponse, error) {
+	// 序列化请求参数
+	reqBytes, err := SerializeToJsonBytesUseNumber(req)
+	if err != nil {
+		return nil, err
+	}
+
+	// 准备HTTP请求
+	httpReq := PrepareRequest("POST", DocumentInfoPath, reqBytes)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq.WithContext(ctx))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// 解析响应
+	var infoResp DocumentInfoResponse
+	err = ParseJsonUseNumber(body, &infoResp)
+	if err != nil {
+		return nil, err
+	}
+
+	return &infoResp, nil
+}
+
+/*
+检查文档是否处理完成 - 使用 doc/info 接口
+*/
+func CheckDocumentProcessingStatus(ctx context.Context, resourceID, docID string) (bool, error) {
+	req := DocumentInfoRequest{
+		ResourceID: resourceID,
+		DocID:      docID,
+	}
+
+	resp, err := GetDocumentInfo(ctx, req)
+	if err != nil {
+		return false, err
+	}
+
+	// 如果返回码不为0，说明查询失败
+	if resp.Code != 0 {
+		return false, fmt.Errorf("query failed with code %d: %s", resp.Code, resp.Message)
+	}
+
+	// 根据文档状态判断是否处理完成
+	// process_status: 0-处理完成, 1-处理失败, 2或3-排队中, 5-删除中, 6-处理中
+	return resp.Data.Status.ProcessStatus == 0, nil
+}
+
+/*
+获取知识库中所有文档的处理状态 - 直接从文档列表响应中获取
+*/
+func GetDocumentProcessingStatus(ctx context.Context, resourceID string) ([]DocumentStatusInfo, error) {
+	// 获取文档列表
+	req := DocumentListRequest{
+		ResourceID: resourceID,
+		Limit:      100, // 获取足够多的结果
+	}
+
+	resp, err := GetDocumentList(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// 如果返回码不为0，说明查询失败
+	if resp.Code != 0 {
+		return nil, fmt.Errorf("query failed with code %d: %s", resp.Code, resp.Message)
+	}
+
+	// 构建文档处理状态列表
+	var docStatusList []DocumentStatusInfo
+
+	// 直接从文档列表中获取处理状态
+	for _, doc := range resp.Data.DocList {
+		statusInfo := DocumentStatusInfo{
+			DocID:         doc.DocID,
+			DocName:       doc.DocName,
+			ProcessStatus: doc.Status.ProcessStatus,
+			StatusText:    getStatusText(doc.Status.ProcessStatus),
+			IsCompleted:   doc.Status.ProcessStatus == 0, // 0表示处理完成
+		}
+		docStatusList = append(docStatusList, statusInfo)
+	}
+
+	return docStatusList, nil
+}
+
+/*
+查询知识库中的文档列表
+*/
+func GetDocumentList(ctx context.Context, req DocumentListRequest) (*DocumentListResponse, error) {
+	// 序列化请求参数
+	reqBytes, err := SerializeToJsonBytesUseNumber(req)
+	if err != nil {
+		return nil, err
+	}
+
+	// 准备HTTP请求
+	httpReq := PrepareRequest("POST", DocumentListPath, reqBytes)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq.WithContext(ctx))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// 解析响应
+	var listResp DocumentListResponse
+	err = ParseJsonUseNumber(body, &listResp)
+	if err != nil {
+		return nil, err
+	}
+
+	return &listResp, nil
+}
+
+/*
 func main() {
 	ctx := context.Background()
 

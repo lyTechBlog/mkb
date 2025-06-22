@@ -2,6 +2,7 @@ package viking_db_tool
 
 import (
 	"context"
+	"fmt"
 	"testing"
 )
 
@@ -61,4 +62,50 @@ func TestUploadDocumentByTosPath(t *testing.T) {
 	}
 
 	t.Logf("Upload successful: %+v", resp)
+}
+
+func TestDeleteDocument(t *testing.T) {
+	ctx := context.Background()
+
+	// 测试删除文档
+	// 注意：这里需要替换为实际存在的resourceID和docID
+	resourceID := "your_resource_id"
+	docID := "your_doc_id"
+
+	resp, err := DeleteDocumentByResourceID(ctx, resourceID, docID)
+	if err != nil {
+		t.Logf("Delete document failed: %v", err)
+		// 如果文档不存在，这是预期的错误
+		return
+	}
+
+	if resp.Code != 0 {
+		t.Errorf("Delete document failed with code %d: %s", resp.Code, resp.Message)
+		return
+	}
+
+	fmt.Printf("Document deleted successfully: %s\n", resp.RequestID)
+}
+
+func TestDeleteDocumentByName(t *testing.T) {
+	ctx := context.Background()
+
+	// 测试通过名称删除文档
+	collectionName := "your_collection_name"
+	project := "default"
+	docID := "your_doc_id"
+
+	resp, err := DeleteDocumentByName(ctx, collectionName, project, docID)
+	if err != nil {
+		t.Logf("Delete document by name failed: %v", err)
+		// 如果文档不存在，这是预期的错误
+		return
+	}
+
+	if resp.Code != 0 {
+		t.Errorf("Delete document by name failed with code %d: %s", resp.Code, resp.Message)
+		return
+	}
+
+	fmt.Printf("Document deleted successfully by name: %s\n", resp.RequestID)
 }

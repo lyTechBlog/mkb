@@ -158,3 +158,86 @@ func CreateFloatMetaField(fieldName string, fieldValue float64) MetaField {
 		FieldValue: fmt.Sprintf("%f", fieldValue),
 	}
 }
+
+// DocumentDeleteRequest represents the request structure for document deletion
+type DocumentDeleteRequest struct {
+	CollectionName string `json:"collection_name,omitempty"`
+	Project        string `json:"project,omitempty"`
+	ResourceID     string `json:"resource_id,omitempty"`
+	DocID          string `json:"doc_id"`
+}
+
+// DocumentDeleteResponse represents the response structure for document deletion
+type DocumentDeleteResponse struct {
+	Code      int64  `json:"code"`
+	Message   string `json:"message,omitempty"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
+const (
+	DocumentDeletePath = "/api/knowledge/doc/delete"
+)
+
+// DeleteDocument deletes a document from the knowledge base
+func DeleteDocument(ctx context.Context, req *DocumentDeleteRequest) (*DocumentDeleteResponse, error) {
+	// Prepare request body
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	// Create HTTP request using the existing PrepareRequest function
+	httpReq := PrepareRequest("POST", DocumentDeletePath, body)
+
+	// Create HTTP client with timeout
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Execute request
+	resp, err := client.Do(httpReq.WithContext(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Parse response
+	var deleteResp DocumentDeleteResponse
+	if err := json.Unmarshal(respBody, &deleteResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	// Check if request was successful
+	if deleteResp.Code != 0 {
+		return &deleteResp, fmt.Errorf("delete failed with code %d: %s", deleteResp.Code, deleteResp.Message)
+	}
+
+	return &deleteResp, nil
+}
+
+// DeleteDocumentByResourceID deletes a document using resource ID and doc ID
+func DeleteDocumentByResourceID(ctx context.Context, resourceID, docID string) (*DocumentDeleteResponse, error) {
+	req := &DocumentDeleteRequest{
+		ResourceID: resourceID,
+		DocID:      docID,
+	}
+
+	return DeleteDocument(ctx, req)
+}
+
+// DeleteDocumentByName deletes a document using collection name, project and doc ID
+func DeleteDocumentByName(ctx context.Context, collectionName, project, docID string) (*DocumentDeleteResponse, error) {
+	req := &DocumentDeleteRequest{
+		CollectionName: collectionName,
+		Project:        project,
+		DocID:          docID,
+	}
+
+	return DeleteDocument(ctx, req)
+}

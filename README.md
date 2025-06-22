@@ -10,6 +10,7 @@
 - ⚡ **高性能**: 基于 Hertz 框架，支持高并发
 - 🔒 **安全可靠**: 文件大小限制、类型检查
 - 📱 **移动端适配**: 支持手机和平板设备
+- **文件删除功能（同时删除TOS文件和知识库文档）**
 
 ## 技术栈
 
@@ -153,4 +154,39 @@ MIT License
 
 ## 贡献
 
-欢迎提交 Issue 和 Pull Request！ 
+欢迎提交 Issue 和 Pull Request！
+
+## 新增删除功能
+
+### 功能说明
+
+当用户删除文件时，系统会：
+1. 删除TOS对象存储中的文件
+2. 同时删除知识库中对应的文档
+
+### API接口
+
+**删除文件**
+```
+DELETE /api/files/:filename?user_id=xxx
+```
+
+**响应示例**
+```json
+{
+  "message": "File deleted successfully from both TOS and knowledge base"
+}
+```
+
+### 实现细节
+
+1. **docID生成规则**：与上传时保持一致，使用正则表达式 `[^a-zA-Z0-9_-]` 过滤文件名
+2. **错误处理**：即使知识库删除失败，TOS文件删除成功仍会返回成功响应
+3. **日志记录**：详细记录删除过程中的错误信息
+
+### 使用示例
+
+```bash
+# 删除文件
+curl -X DELETE "http://localhost:8888/api/files/example.txt?user_id=user123"
+``` 
