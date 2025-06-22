@@ -39,6 +39,52 @@
             color: #888;
             font-weight: 400;
         }
+        .auth-section {
+            margin-bottom: 32px;
+        }
+        .form-group {
+            margin-bottom: 24px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #222;
+            font-size: 1em;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 1em;
+            box-sizing: border-box;
+            transition: border-color 0.2s;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+        .auth-btn {
+            background: #2563eb;
+            color: #fff;
+            border: none;
+            padding: 12px 28px;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 500;
+            cursor: pointer;
+            width: 100%;
+            transition: background 0.2s;
+        }
+        .auth-btn:hover {
+            background: #1749b1;
+        }
+        .auth-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
         .upload-section {
             margin-bottom: 32px;
         }
@@ -158,6 +204,27 @@
             color: #2563eb;
             font-weight: 500;
         }
+        .file-actions {
+            display: flex;
+            gap: 8px;
+        }
+        .delete-btn {
+            background: #dc2626;
+            color: #fff;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.85em;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .delete-btn:hover {
+            background: #b91c1c;
+        }
+        .delete-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
         .loading {
             display: inline-block;
             width: 18px;
@@ -172,41 +239,107 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        .user-info {
+            background: #f0f6ff;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 24px;
+            border: 1px solid #dbeafe;
+        }
+        .user-info .user-id {
+            font-weight: 500;
+            color: #2563eb;
+        }
+        .logout-btn {
+            background: #dc2626;
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 0.9em;
+            cursor: pointer;
+            margin-top: 8px;
+            transition: background 0.2s;
+        }
+        .logout-btn:hover {
+            background: #b91c1c;
+        }
+        .hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>文件上传系统</h1>
-            <p>基于 Hertz 框架的文件上传服务</p>
-        </div>
-        <div class="content">
-            <div class="upload-section">
-                <div class="upload-area" id="uploadArea">
-                    <div class="upload-icon">&#8682;</div>
-                    <div class="upload-text">拖拽文件到此处或点击选择文件</div>
-                    <div class="upload-hint">支持所有类型的文件</div>
-                    <input type="file" id="fileInput" multiple>
-                    <button class="upload-btn" id="uploadBtn" onclick="document.getElementById('fileInput').click()">
-                        选择文件
-                    </button>
-                </div>
-                <div class="progress-bar" id="progressBar">
-                    <div class="progress-fill" id="progressFill"></div>
-                </div>
+        <!-- 身份验证页面 -->
+        <div id="authPage">
+            <div class="header">
+                <h1>文件上传系统</h1>
+                <p>请输入您的用户ID进行身份验证</p>
             </div>
-            <div class="message" id="message"></div>
-            <div class="file-list">
-                <h3>已上传文件</h3>
-                <div id="fileList">
-                    <div style="text-align: center; color: #bbb; padding: 36px; font-size: 1em;">
-                        暂无文件，请先上传文件
+            <div class="auth-section">
+                <div class="form-group">
+                    <label for="userId">用户ID</label>
+                    <input type="text" id="userId" placeholder="请输入用户ID" autocomplete="off">
+                </div>
+                <button class="auth-btn" id="authBtn" onclick="authenticateUser()">
+                    验证身份
+                </button>
+            </div>
+            <div class="message" id="authMessage"></div>
+        </div>
+
+        <!-- 上传页面 -->
+        <div id="uploadPage" class="hidden">
+            <div class="header">
+                <h1>文件上传系统</h1>
+                <p>基于 Hertz 框架的文件上传服务</p>
+            </div>
+            <div class="user-info">
+                <div>当前用户: <span class="user-id" id="currentUserId"></span></div>
+                <button class="logout-btn" onclick="logout()">退出登录</button>
+            </div>
+            <div class="content">
+                <div class="upload-section">
+                    <div class="upload-area" id="uploadArea">
+                        <div class="upload-icon">&#8682;</div>
+                        <div class="upload-text">拖拽文件到此处或点击选择文件</div>
+                        <div class="upload-hint">支持所有类型的文件</div>
+                        <input type="file" id="fileInput" multiple>
+                        <button class="upload-btn" id="uploadBtn" onclick="document.getElementById('fileInput').click()">
+                            选择文件
+                        </button>
+                    </div>
+                    <div class="progress-bar" id="progressBar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                </div>
+                <div class="message" id="message"></div>
+                <div class="file-list">
+                    <h3>已上传文件</h3>
+                    <div id="fileList">
+                        <div style="text-align: center; color: #bbb; padding: 36px; font-size: 1em;">
+                            暂无文件，请先上传文件
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
     <script>
+        // 白名单用户列表
+        const whitelist = ['ly', 'wf'];
+        let currentUser = null;
+
+        // 身份验证相关元素
+        const authPage = document.getElementById('authPage');
+        const uploadPage = document.getElementById('uploadPage');
+        const userIdInput = document.getElementById('userId');
+        const authBtn = document.getElementById('authBtn');
+        const authMessage = document.getElementById('authMessage');
+        const currentUserIdSpan = document.getElementById('currentUserId');
+
+        // 上传相关元素
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('fileInput');
         const uploadBtn = document.getElementById('uploadBtn');
@@ -214,6 +347,55 @@
         const progressFill = document.getElementById('progressFill');
         const message = document.getElementById('message');
         const fileList = document.getElementById('fileList');
+
+        // 身份验证函数
+        function authenticateUser() {
+            const userId = userIdInput.value.trim();
+            
+            if (!userId) {
+                showAuthMessage('请输入用户ID', 'error');
+                return;
+            }
+
+            if (whitelist.includes(userId)) {
+                currentUser = userId;
+                currentUserIdSpan.textContent = userId;
+                authPage.classList.add('hidden');
+                uploadPage.classList.remove('hidden');
+                showAuthMessage('身份验证成功！', 'success');
+                loadFileList();
+            } else {
+                showAuthMessage('用户ID不在白名单中，无法访问', 'error');
+            }
+        }
+
+        // 退出登录函数
+        function logout() {
+            currentUser = null;
+            userIdInput.value = '';
+            authPage.classList.remove('hidden');
+            uploadPage.classList.add('hidden');
+            showAuthMessage('已退出登录', 'success');
+        }
+
+        // 显示身份验证消息
+        function showAuthMessage(text, type) {
+            authMessage.textContent = text;
+            authMessage.className = `message ${type}`;
+            authMessage.style.display = 'block';
+            setTimeout(() => {
+                authMessage.style.display = 'none';
+            }, 3000);
+        }
+
+        // 回车键验证
+        userIdInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                authenticateUser();
+            }
+        });
+
+        // 拖拽上传功能
         uploadArea.addEventListener('dragover', (e) => {
             e.preventDefault();
             uploadArea.classList.add('dragover');
@@ -235,14 +417,17 @@
                 uploadFiles(files);
             }
         });
+
         async function uploadFiles(files) {
             for (let file of files) {
                 await uploadFile(file);
             }
         }
+
         async function uploadFile(file) {
             const formData = new FormData();
             formData.append('file', file);
+            formData.append('user_id', currentUser);
             progressBar.style.display = 'block';
             uploadBtn.disabled = true;
             uploadBtn.innerHTML = '<span class="loading"></span>上传中...';
@@ -267,6 +452,7 @@
                 uploadBtn.innerHTML = '选择文件';
             }
         }
+
         function showMessage(text, type) {
             message.textContent = text;
             message.className = `message ${type}`;
@@ -275,9 +461,10 @@
                 message.style.display = 'none';
             }, 4000);
         }
+
         async function loadFileList() {
             try {
-                const response = await fetch('/api/files');
+                const response = await fetch(`/api/files?user_id=${currentUser}`);
                 const result = await response.json();
                 if (response.ok) {
                     displayFiles(result.files);
@@ -288,6 +475,7 @@
                 fileList.innerHTML = '<div style="text-align: center; color: #bbb; padding: 36px; font-size: 1em;">加载失败</div>';
             }
         }
+
         function displayFiles(files) {
             if (files.length === 0) {
                 fileList.innerHTML = '<div style="text-align: center; color: #bbb; padding: 36px; font-size: 1em;">暂无文件，请先上传文件</div>';
@@ -298,12 +486,37 @@
                     <div class="file-info">
                         <div class="file-name">${file.name}</div>
                         <div class="file-details">
-                            大小: <span class="file-size">${formatFileSize(file.size)}</span> | 上传时间: ${new Date(file.modTime).toLocaleString()}
+                            大小: <span class="file-size">${formatFileSize(file.size)}</span> | 上传时间: ${new Date(file.modTime).toLocaleString()} | 用户: ${file.user_id || currentUser}
                         </div>
+                    </div>
+                    <div class="file-actions">
+                        <button class="delete-btn" onclick="deleteFile('${file.name}')">删除</button>
                     </div>
                 </div>
             `).join('');
         }
+
+        async function deleteFile(filename) {
+            if (!confirm(`确定要删除文件 "${filename}" 吗？`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/files/${encodeURIComponent(filename)}?user_id=${currentUser}`, {
+                    method: 'DELETE'
+                });
+                const result = await response.json();
+                if (response.ok) {
+                    showMessage(`文件 "${filename}" 删除成功！`, 'success');
+                    loadFileList(); // 重新加载文件列表
+                } else {
+                    showMessage(`删除失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showMessage(`删除失败: ${error.message}`, 'error');
+            }
+        }
+
         function formatFileSize(bytes) {
             if (bytes === 0) return '0 Bytes';
             const k = 1024;
@@ -311,8 +524,12 @@
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
+
+        // 页面加载时检查是否已登录
         document.addEventListener('DOMContentLoaded', () => {
-            loadFileList();
+            // 默认显示身份验证页面
+            authPage.classList.remove('hidden');
+            uploadPage.classList.add('hidden');
         });
     </script>
 </body>

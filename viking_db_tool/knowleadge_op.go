@@ -22,6 +22,7 @@ var KnowledgeBaseDomain = "api-knowledgebase.mlp.cn-beijing.volces.com"
 var SearchKnowledgePath = "/api/knowledge/collection/search_knowledge" // 知识库检索接口，建议您首次接入时使用该检索接口，其他检索接口后续不再进行维护
 var ChatCompletionPath = "/api/knowledge/chat/completions"             // 大模型对话接口，可以和检索接口接合串联RAG流程，也可以单独使用进行生成
 var CreateKnowledgeBasePath = "/api/knowledge/collection/create"       // 知识库创建接口
+var KnowledgeBaseInfoPath = "/api/knowledge/collection/info"           // 知识库信息查询接口
 
 var ModelName = "Doubao-1-5-pro-32k" // 模型名称，如果您想使用自己的私有ep，可以赋值为私有EndpointID，格式（ep-xxxx-xxxx）
 var APIKey = "your api_key"          // 如果您使用的是自己的私有ep，需要传入api_key
@@ -278,12 +279,11 @@ type ModelTokenUsage struct {
 知识库创建请求参数结构体
 */
 type CreateKnowledgeBaseRequest struct {
-	Name        string       `json:"name"`
-	Description string       `json:"description"`
-	Version     int          `json:"version"`
-	Project     string       `json:"project"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Version     int    `json:"version"`
+	Project     string `json:"project"`
 }
-
 
 type IndexConfigDetails struct {
 	Fields             []string `json:"fields"`
@@ -313,6 +313,33 @@ type CreateKnowledgeBaseResponseData struct {
 	ResourceID string `json:"resource_id"`
 	Name       string `json:"name"`
 	Project    string `json:"project"`
+}
+
+/*
+知识库信息查询请求参数结构体
+*/
+type KnowledgeBaseInfoRequest struct {
+	Name    string `json:"name"`
+	Project string `json:"project"`
+}
+
+/*
+知识库信息查询响应参数结构体
+*/
+type KnowledgeBaseInfoResponse struct {
+	Code    int64                          `json:"code"`
+	Message string                         `json:"message,omitempty"`
+	Data    *KnowledgeBaseInfoResponseData `json:"data,omitempty"`
+}
+
+type KnowledgeBaseInfoResponseData struct {
+	ResourceID  string `json:"resource_id"`
+	Name        string `json:"name"`
+	Project     string `json:"project"`
+	Description string `json:"description"`
+	Version     int    `json:"version"`
+	CreateTime  int64  `json:"create_time"`
+	UpdateTime  int64  `json:"update_time"`
 }
 
 func ParseJsonUseNumber(input []byte, target interface{}) error {
@@ -757,6 +784,65 @@ func CreateKnowledgeBase(ctx context.Context, name, description, dataType, proje
 func CreateStructuredDataKnowledgeBase(ctx context.Context, name, description, project string) (*CreateKnowledgeBaseResponse, error) {
 	// 调用创建知识库函数
 	return CreateKnowledgeBase(ctx, name, description, "structured_data", project)
+}
+
+/*
+获取知识库信息
+*/
+func GetKnowledgeBaseInfo(ctx context.Context, name, project string) (*KnowledgeBaseInfoResponse, error) {
+	// 构建请求参数
+	infoReq := KnowledgeBaseInfoRequest{
+		Name:    name,
+		Project: project,
+	}
+
+	// 序列化请求参数
+	infoReqBytes, err := SerializeToJsonBytesUseNumber(infoReq)
+	if err != nil {
+		return nil, err
+	}
+
+	// 准备HTTP请求
+	req := PrepareRequest("POST", KnowledgeBaseInfoPath, infoReqBytes)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// 解析响应
+	var infoResp *KnowledgeBaseInfoResponse
+	err = ParseJsonUseNumber(body, &infoResp)
+	if err != nil {
+		return nil, err
+	}
+
+	return infoResp, nil
+}
+
+/*
+检查知识库是否存在
+*/
+func CheckKnowledgeBaseExists(ctx context.Context, name, project string) (bool, string, error) {
+	infoResp, err := GetKnowledgeBaseInfo(ctx, name, project)
+	if err != nil {
+		return false, "", err
+	}
+
+	// 如果返回码为0，说明知识库存在
+	if infoResp.Code == 0 {
+		return true, infoResp.Data.ResourceID, nil
+	}
+
+	// 如果返回码不为0，说明知识库不存在或查询失败
+	return false, "", nil
 }
 
 /*

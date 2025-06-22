@@ -81,6 +81,16 @@ func uploadFile(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	// 获取用户ID
+	userIDs := form.Value["user_id"]
+	if len(userIDs) == 0 || userIDs[0] == "" {
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "User ID is required",
+		})
+		return
+	}
+	userID := userIDs[0]
+
 	files := form.File["file"]
 	if len(files) == 0 {
 		c.JSON(consts.StatusBadRequest, utils.H{
@@ -132,8 +142,8 @@ func uploadFile(ctx context.Context, c *app.RequestContext) {
 		}
 		dst.Close()
 
-		// 调用TOS上传方法
-		objectKey := fmt.Sprintf("uploads/%s", filename)
+		// 调用TOS上传方法，在路径中包含用户ID
+		objectKey := fmt.Sprintf("uploads/%s/%s", userID, filename)
 		preSignedURL, err := tos_tool.UploadFileWithEnvConfig(tempFilePath, objectKey)
 		if err != nil {
 			// 清理临时文件
@@ -148,18 +158,51 @@ func uploadFile(ctx context.Context, c *app.RequestContext) {
 		os.Remove(tempFilePath)
 
 		uploadedFiles = append(uploadedFiles, map[string]interface{}{
-			"name": filename,
-			"url":  preSignedURL,
+			"name":    filename,
+			"url":     preSignedURL,
+			"user_id": userID,
 		})
 
+		// 检查知识库是否存在
+		knowledgeBaseName := "kb_" + userID // 使用用户id作为知识库名称
+		project := "default"
+		exists, resourceID, err := viking_db_tool.CheckKnowledgeBaseExists(ctx, knowledgeBaseName, project)
+		if err != nil {
+			c.JSON(consts.StatusInternalServerError, utils.H{
+				"error": "Failed to check knowledge base existence: " + err.Error(),
+			})
+			return
+		}
+
+		if !exists {
+			// 如果知识库不存在，创建知识库
+			createResp, err := viking_db_tool.CreateKnowledgeBase(ctx, knowledgeBaseName, "Knowledge base for user documents", "unstructured_data", project)
+			if err != nil {
+				c.JSON(consts.StatusInternalServerError, utils.H{
+					"error": "Failed to create knowledge base: " + err.Error(),
+				})
+				return
+			}
+			if createResp.Code != 0 {
+				c.JSON(consts.StatusInternalServerError, utils.H{
+					"error": "Failed to create knowledge base: " + createResp.Message,
+				})
+				return
+			}
+			resourceID = createResp.Data.ResourceID
+			fmt.Printf("Created knowledge base: %s with ResourceID: %s\n", knowledgeBaseName, resourceID)
+		} else {
+			fmt.Printf("Knowledge base exists: %s with ResourceID: %s\n", knowledgeBaseName, resourceID)
+		}
+
 		// 上传文件到Viking DB
-		resourceID := "kb-bd0872aa77719869"
 		// docID只保留字符和数字以及_和-
 		docID := regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(filename, "")
 		docName := filename
 		docType := "txt"
 		meta := []viking_db_tool.MetaField{
 			viking_db_tool.CreateStringMetaField("行业", "企业服务"),
+			viking_db_tool.CreateStringMetaField("用户ID", userID),
 		}
 
 		// 上传文件到Viking DB
@@ -191,31 +234,33 @@ func uploadFile(ctx context.Context, c *app.RequestContext) {
 
 // 列出所有文件
 func listFiles(ctx context.Context, c *app.RequestContext) {
-	files, err := os.ReadDir(uploadDir)
-	if err != nil {
-		c.JSON(consts.StatusInternalServerError, utils.H{
-			"error": "Failed to read upload directory: " + err.Error(),
+	// 获取用户ID参数
+	userID := c.Query("user_id")
+	if userID == "" {
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "User ID is required",
 		})
 		return
 	}
 
-	var fileList []map[string]interface{}
-	for _, file := range files {
-		if !file.IsDir() {
-			info, err := file.Info()
-			if err != nil {
-				continue
-			}
-			fileList = append(fileList, map[string]interface{}{
-				"name":    file.Name(),
-				"size":    info.Size(),
-				"modTime": info.ModTime().Format(time.RFC3339),
-			})
-		}
+	// 使用TOS工具列出用户上传的文件
+	prefix := fmt.Sprintf("uploads/%s/", userID)
+	files, err := tos_tool.ListFilesWithEnvConfig(prefix)
+	if err != nil {
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "Failed to list files from TOS: " + err.Error(),
+		})
+		return
+	}
+
+	// 为每个文件添加用户ID信息
+	for i := range files {
+		files[i]["user_id"] = userID
 	}
 
 	c.JSON(consts.StatusOK, utils.H{
-		"files": fileList,
+		"files":   files,
+		"user_id": userID,
 	})
 }
 
@@ -252,25 +297,28 @@ func deleteFile(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	filepath := filepath.Join(uploadDir, filename)
-
-	// 检查文件是否存在
-	if _, err := os.Stat(filepath); os.IsNotExist(err) {
-		c.JSON(consts.StatusNotFound, utils.H{
-			"error": "File not found",
+	// 获取用户ID参数
+	userID := c.Query("user_id")
+	if userID == "" {
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "User ID is required",
 		})
 		return
 	}
 
-	// 删除文件
-	if err := os.Remove(filepath); err != nil {
+	// 构建TOS对象键
+	objectKey := fmt.Sprintf("uploads/%s/%s", userID, filename)
+
+	// 删除TOS中的文件
+	err := tos_tool.DeleteFileWithEnvConfig(objectKey)
+	if err != nil {
 		c.JSON(consts.StatusInternalServerError, utils.H{
-			"error": "Failed to delete file: " + err.Error(),
+			"error": "Failed to delete file from TOS: " + err.Error(),
 		})
 		return
 	}
 
 	c.JSON(consts.StatusOK, utils.H{
-		"message": "File deleted successfully",
+		"message": "File deleted successfully from TOS",
 	})
 }
