@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>文件上传系统</title>
+    <title>文件上传与知识库对话系统</title>
     <link href="https://fonts.googleapis.com/css?family=Inter:400,600&display=swap" rel="stylesheet">
     <style>
         html, body {
@@ -15,14 +15,32 @@
             min-height: 100vh;
             color: #222;
         }
+        .main-container {
+            display: flex;
+            min-height: 100vh;
+            gap: 24px;
+            padding: 24px;
+            box-sizing: border-box;
+        }
         .container {
-            max-width: 420px;
-            margin: 48px auto;
+            flex: 1;
             background: #fff;
             border-radius: 18px;
             box-shadow: none;
             padding: 36px 28px 32px 28px;
             border: 1px solid #ececec;
+            max-width: 420px;
+        }
+        .chat-container {
+            flex: 1;
+            background: #fff;
+            border-radius: 18px;
+            box-shadow: none;
+            padding: 36px 28px 32px 28px;
+            border: 1px solid #ececec;
+            display: flex;
+            flex-direction: column;
+            max-width: 600px;
         }
         .header {
             text-align: center;
@@ -267,12 +285,138 @@
         .hidden {
             display: none;
         }
+        
+        /* 聊天窗口样式 */
+        .chat-header {
+            text-align: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #ececec;
+        }
+        .chat-header h2 {
+            font-size: 1.5em;
+            font-weight: 600;
+            color: #111;
+            margin-bottom: 4px;
+        }
+        .chat-header p {
+            font-size: 0.9em;
+            color: #888;
+        }
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            padding: 16px;
+            background: #fafbfc;
+            border-radius: 12px;
+            border: 1px solid #ececec;
+            max-height: 400px;
+        }
+        .chat-message {
+            margin-bottom: 16px;
+            padding: 12px 16px;
+            border-radius: 12px;
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+        .chat-message.user {
+            background: #2563eb;
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+        .chat-message.assistant {
+            background: white;
+            color: #222;
+            border: 1px solid #ececec;
+        }
+        .chat-message.system {
+            background: #f0f6ff;
+            color: #2563eb;
+            border: 1px solid #dbeafe;
+            font-size: 0.9em;
+            text-align: center;
+            margin: 0 auto;
+        }
+        .chat-input-container {
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+        .chat-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 1em;
+            resize: none;
+            min-height: 44px;
+            max-height: 120px;
+            font-family: inherit;
+        }
+        .chat-input:focus {
+            outline: none;
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+        .send-btn {
+            background: #2563eb;
+            color: #fff;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+            white-space: nowrap;
+        }
+        .send-btn:hover {
+            background: #1749b1;
+        }
+        .send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .chat-placeholder {
+            text-align: center;
+            color: #bbb;
+            padding: 40px 20px;
+            font-size: 1em;
+        }
+        .typing-indicator {
+            display: none;
+            padding: 12px 16px;
+            background: white;
+            border: 1px solid #ececec;
+            border-radius: 12px;
+            margin-bottom: 16px;
+            max-width: 80%;
+        }
+        .typing-dots {
+            display: flex;
+            gap: 4px;
+        }
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            background: #ccc;
+            border-radius: 50%;
+            animation: typing 1.4s infinite ease-in-out;
+        }
+        .typing-dot:nth-child(1) { animation-delay: -0.32s; }
+        .typing-dot:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes typing {
+            0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
+            40% { transform: scale(1); opacity: 1; }
+        }
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="main-container">
         <!-- 身份验证页面 -->
-        <div id="authPage">
+        <div id="authPage" class="container">
             <div class="header">
                 <h1>文件上传系统</h1>
                 <p>请输入您的用户ID进行身份验证</p>
@@ -289,39 +433,72 @@
             <div class="message" id="authMessage"></div>
         </div>
 
-        <!-- 上传页面 -->
-        <div id="uploadPage" class="hidden">
-            <div class="header">
-                <h1>文件上传系统</h1>
-                <p>基于 Hertz 框架的文件上传服务</p>
-            </div>
-            <div class="user-info">
-                <div>当前用户: <span class="user-id" id="currentUserId"></span></div>
-                <button class="logout-btn" onclick="logout()">退出登录</button>
-            </div>
-            <div class="content">
-                <div class="upload-section">
-                    <div class="upload-area" id="uploadArea">
-                        <div class="upload-icon">&#8682;</div>
-                        <div class="upload-text">拖拽文件到此处或点击选择文件</div>
-                        <div class="upload-hint">支持所有类型的文件</div>
-                        <input type="file" id="fileInput" multiple>
-                        <button class="upload-btn" id="uploadBtn" onclick="document.getElementById('fileInput').click()">
-                            选择文件
-                        </button>
-                    </div>
-                    <div class="progress-bar" id="progressBar">
-                        <div class="progress-fill" id="progressFill"></div>
-                    </div>
+        <!-- 主应用页面 -->
+        <div id="mainApp" class="hidden" style="display: flex; width: 100%; gap: 24px;">
+            <!-- 左侧：文件上传 -->
+            <div class="container">
+                <div class="header">
+                    <h1>文件上传</h1>
+                    <p>上传文件到知识库</p>
                 </div>
-                <div class="message" id="message"></div>
-                <div class="file-list">
-                    <h3>已上传文件</h3>
-                    <div id="fileList">
-                        <div style="text-align: center; color: #bbb; padding: 36px; font-size: 1em;">
-                            暂无文件，请先上传文件
+                <div class="user-info">
+                    <div>当前用户: <span class="user-id" id="currentUserId"></span></div>
+                    <button class="logout-btn" onclick="logout()">退出登录</button>
+                </div>
+                <div class="content">
+                    <div class="upload-section">
+                        <div class="upload-area" id="uploadArea">
+                            <div class="upload-icon">&#8682;</div>
+                            <div class="upload-text">拖拽文件到此处或点击选择文件</div>
+                            <div class="upload-hint">支持所有类型的文件</div>
+                            <input type="file" id="fileInput" multiple>
+                            <button class="upload-btn" id="uploadBtn" onclick="document.getElementById('fileInput').click()">
+                                选择文件
+                            </button>
+                        </div>
+                        <div class="progress-bar" id="progressBar">
+                            <div class="progress-fill" id="progressFill"></div>
                         </div>
                     </div>
+                    <div class="message" id="message"></div>
+                    <div class="file-list">
+                        <h3>已上传文件</h3>
+                        <div id="fileList">
+                            <div style="text-align: center; color: #bbb; padding: 36px; font-size: 1em;">
+                                暂无文件，请先上传文件
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：知识库对话 -->
+            <div class="chat-container">
+                <div class="chat-header">
+                    <h2>知识库对话</h2>
+                    <p>基于您上传的文档进行智能问答</p>
+                </div>
+                <div class="chat-messages" id="chatMessages">
+                    <div class="chat-placeholder">
+                        欢迎使用知识库对话系统！<br>
+                        请在上传文件后开始提问。
+                    </div>
+                </div>
+                <div class="typing-indicator" id="typingIndicator">
+                    <div class="typing-dots">
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                    </div>
+                </div>
+                <div class="chat-input-container">
+                    <textarea 
+                        class="chat-input" 
+                        id="chatInput" 
+                        placeholder="请输入您的问题..."
+                        rows="1"
+                    ></textarea>
+                    <button class="send-btn" id="sendBtn" onclick="sendMessage()">发送</button>
                 </div>
             </div>
         </div>
@@ -330,10 +507,11 @@
         // 白名单用户列表
         const whitelist = ['ly', 'wf'];
         let currentUser = null;
+        let chatHistory = [];
 
         // 身份验证相关元素
         const authPage = document.getElementById('authPage');
-        const uploadPage = document.getElementById('uploadPage');
+        const mainApp = document.getElementById('mainApp');
         const userIdInput = document.getElementById('userId');
         const authBtn = document.getElementById('authBtn');
         const authMessage = document.getElementById('authMessage');
@@ -348,6 +526,12 @@
         const message = document.getElementById('message');
         const fileList = document.getElementById('fileList');
 
+        // 聊天相关元素
+        const chatMessages = document.getElementById('chatMessages');
+        const chatInput = document.getElementById('chatInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const typingIndicator = document.getElementById('typingIndicator');
+
         // 身份验证函数
         function authenticateUser() {
             const userId = userIdInput.value.trim();
@@ -361,7 +545,7 @@
                 currentUser = userId;
                 currentUserIdSpan.textContent = userId;
                 authPage.classList.add('hidden');
-                uploadPage.classList.remove('hidden');
+                mainApp.style.display = 'flex';
                 showAuthMessage('身份验证成功！', 'success');
                 loadFileList();
             } else {
@@ -374,8 +558,11 @@
             currentUser = null;
             userIdInput.value = '';
             authPage.classList.remove('hidden');
-            uploadPage.classList.add('hidden');
+            mainApp.style.display = 'none';
             showAuthMessage('已退出登录', 'success');
+            // 清空聊天记录
+            chatHistory = [];
+            chatMessages.innerHTML = '<div class="chat-placeholder">欢迎使用知识库对话系统！<br>请在上传文件后开始提问。</div>';
         }
 
         // 显示身份验证消息
@@ -440,6 +627,8 @@
                 if (response.ok) {
                     showMessage(`文件 "${file.name}" 上传成功！`, 'success');
                     loadFileList();
+                    // 添加系统消息提示文件已上传
+                    addSystemMessage(`文件 "${file.name}" 已上传到知识库，现在可以开始提问了。`);
                 } else {
                     showMessage(`上传失败: ${result.error}`, 'error');
                 }
@@ -525,11 +714,117 @@
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
 
+        // 聊天相关函数
+        function addMessage(content, type) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `chat-message ${type}`;
+            messageDiv.textContent = content;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function addSystemMessage(content) {
+            addMessage(content, 'system');
+        }
+
+        function addUserMessage(content) {
+            addMessage(content, 'user');
+        }
+
+        function addAssistantMessage(content) {
+            addMessage(content, 'assistant');
+        }
+
+        function showTypingIndicator() {
+            typingIndicator.style.display = 'block';
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function hideTypingIndicator() {
+            typingIndicator.style.display = 'none';
+        }
+
+        async function sendMessage() {
+            const message = chatInput.value.trim();
+            if (!message) return;
+
+            // 添加用户消息
+            addUserMessage(message);
+            chatInput.value = '';
+            
+            // 显示打字指示器
+            showTypingIndicator();
+
+            try {
+                // 构建聊天历史
+                const messages = chatHistory.map(msg => ({
+                    role: msg.role,
+                    content: msg.content
+                }));
+                
+                // 添加当前用户消息
+                messages.push({
+                    role: 'user',
+                    content: message
+                });
+
+                // 调用知识库检索API
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        user_id: currentUser,
+                        query: message,
+                        messages: messages
+                    })
+                });
+
+                const result = await response.json();
+                
+                hideTypingIndicator();
+
+                if (response.ok) {
+                    const assistantResponse = result.answer || '抱歉，我无法找到相关信息。';
+                    addAssistantMessage(assistantResponse);
+                    
+                    // 更新聊天历史
+                    chatHistory.push({ role: 'user', content: message });
+                    chatHistory.push({ role: 'assistant', content: assistantResponse });
+                    
+                    // 保持聊天历史在合理范围内（最近10轮对话）
+                    if (chatHistory.length > 20) {
+                        chatHistory = chatHistory.slice(-20);
+                    }
+                } else {
+                    addAssistantMessage(`抱歉，发生了错误：${result.error || '未知错误'}`);
+                }
+            } catch (error) {
+                hideTypingIndicator();
+                addAssistantMessage(`抱歉，网络错误：${error.message}`);
+            }
+        }
+
+        // 聊天输入框回车发送
+        chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // 自动调整输入框高度
+        chatInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        });
+
         // 页面加载时检查是否已登录
         document.addEventListener('DOMContentLoaded', () => {
             // 默认显示身份验证页面
             authPage.classList.remove('hidden');
-            uploadPage.classList.add('hidden');
+            mainApp.style.display = 'none';
         });
     </script>
 </body>

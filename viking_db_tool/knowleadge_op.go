@@ -472,6 +472,32 @@ func SearchKnowledge(ctx context.Context) (*CollectionSearchKnowledgeResponse, e
 	return searchKnowledgeResp, nil
 }
 
+// SearchKnowledgeWithParams 使用自定义参数进行知识库检索
+func SearchKnowledgeWithParams(ctx context.Context, searchReq CollectionSearchKnowledgeRequest) (*CollectionSearchKnowledgeResponse, error) {
+	searchReqBytes, err := SerializeToJsonBytesUseNumber(searchReq)
+	if err != nil {
+		return nil, err
+	}
+	req := PrepareRequest("POST", SearchKnowledgePath, searchReqBytes)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var searchKnowledgeResp *CollectionSearchKnowledgeResponse
+	err = ParseJsonUseNumber(body, &searchKnowledgeResp)
+	if err != nil {
+		return nil, err
+	}
+	return searchKnowledgeResp, nil
+}
+
 func GenerateChatCompletionReqParams(stream bool, messages []MessageParam) *CollectionChatCompletionRequest {
 	return &CollectionChatCompletionRequest{
 		Model:            ModelName, // 如果使用私有ep，此处替换为私有ep即可，格式 ep-xxx-xxx

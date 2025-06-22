@@ -56,6 +56,7 @@ func main() {
 		api.GET("/files", listFiles)
 		api.GET("/files/:filename", downloadFile)
 		api.DELETE("/files/:filename", deleteFile)
+		api.POST("/chat", chatWithKnowledgeBase)
 	}
 
 	// 健康检查
@@ -320,5 +321,169 @@ func deleteFile(ctx context.Context, c *app.RequestContext) {
 
 	c.JSON(consts.StatusOK, utils.H{
 		"message": "File deleted successfully from TOS",
+	})
+}
+
+// 知识库对话处理
+func chatWithKnowledgeBase(ctx context.Context, c *app.RequestContext) {
+	var request struct {
+		UserID   string                        `json:"user_id"`
+		Query    string                        `json:"query"`
+		Messages []viking_db_tool.MessageParam `json:"messages"`
+	}
+
+	if err := c.BindJSON(&request); err != nil {
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "Invalid request format: " + err.Error(),
+		})
+		return
+	}
+
+	if request.UserID == "" {
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "User ID is required",
+		})
+		return
+	}
+
+	if request.Query == "" {
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "Query is required",
+		})
+		return
+	}
+
+	// 检查知识库是否存在
+	knowledgeBaseName := "kb_" + request.UserID
+	project := "default"
+	exists, resourceID, err := viking_db_tool.CheckKnowledgeBaseExists(ctx, knowledgeBaseName, project)
+	if err != nil {
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "Failed to check knowledge base existence: " + err.Error(),
+		})
+		return
+	}
+
+	if !exists {
+		c.JSON(consts.StatusNotFound, utils.H{
+			"error": "Knowledge base not found. Please upload some files first.",
+		})
+		return
+	}
+
+	// 设置知识库检索参数
+	viking_db_tool.CollectionName = knowledgeBaseName
+	viking_db_tool.Project = project
+	viking_db_tool.ResourceID = resourceID
+	viking_db_tool.Query = request.Query
+
+	// 构建检索请求参数
+	searchReq := viking_db_tool.CollectionSearchKnowledgeRequest{
+		Name:        knowledgeBaseName,
+		Project:     project,
+		ResourceId:  resourceID,
+		Query:       request.Query,
+		Limit:       5, // 限制返回结果数量
+		DenseWeight: 0.5,
+		Preprocessing: viking_db_tool.PreProcessing{
+			NeedInstruction:  true,
+			ReturnTokenUsage: true,
+			Rewrite:          false,
+			Messages:         request.Messages, // 使用传入的聊天历史
+		},
+		Postprocessing: viking_db_tool.PostProcessing{
+			RerankSwitch:        false,
+			RetrieveCount:       25,
+			GetAttachmentLink:   true,
+			ChunkGroup:          true,
+			ChunkDiffusionCount: 0,
+		},
+	}
+
+	// 执行知识库检索
+	searchResp, err := viking_db_tool.SearchKnowledgeWithParams(ctx, searchReq)
+	if err != nil {
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "Failed to search knowledge base: " + err.Error(),
+		})
+		return
+	}
+
+	if searchResp.Code != 0 {
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "Knowledge base search failed: " + searchResp.Message,
+		})
+		return
+	}
+
+	// 生成提示词
+	prompt, images, err := viking_db_tool.GeneratePrompt(searchResp)
+	if err != nil {
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "Failed to generate prompt: " + err.Error(),
+		})
+		return
+	}
+
+	// 构建对话消息
+	var messages []viking_db_tool.MessageParam
+	if len(images) > 0 {
+		// 对于Vision模型，需要将图片链接拼接到Message中
+		var multiModalMessage []*viking_db_tool.ChatCompletionMessageContentPart
+		multiModalMessage = append(multiModalMessage, &viking_db_tool.ChatCompletionMessageContentPart{
+			Type: viking_db_tool.ChatCompletionMessageContentPartTypeText,
+			Text: request.Query,
+		})
+		for _, imageURL := range images {
+			multiModalMessage = append(multiModalMessage, &viking_db_tool.ChatCompletionMessageContentPart{
+				Type:     viking_db_tool.ChatCompletionMessageContentPartTypeImageURL,
+				ImageURL: &viking_db_tool.ChatMessageImageURL{URL: imageURL},
+			})
+		}
+
+		messages = []viking_db_tool.MessageParam{
+			{
+				Role:    "system",
+				Content: prompt,
+			},
+			{
+				Role:    "user",
+				Content: multiModalMessage,
+			},
+		}
+	} else {
+		// 普通文本LLM模型
+		messages = []viking_db_tool.MessageParam{
+			{
+				Role:    "system",
+				Content: prompt,
+			},
+			{
+				Role:    "user",
+				Content: request.Query,
+			},
+		}
+	}
+
+	// 调用大模型生成回答
+	chatResp, err := viking_db_tool.ChatCompletion(ctx, messages)
+	if err != nil {
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "Failed to generate response: " + err.Error(),
+		})
+		return
+	}
+
+	if chatResp.Code != 0 {
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "Chat completion failed: " + chatResp.Message,
+		})
+		return
+	}
+
+	// 返回生成的回答
+	c.JSON(consts.StatusOK, utils.H{
+		"answer": chatResp.Data.GenerateAnswer,
+		"usage":  chatResp.Data.Usage,
 	})
 }
