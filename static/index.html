@@ -401,6 +401,33 @@
             font-size: 0.9em;
             text-align: center;
             margin: 0 auto;
+            animation: pulse 2s infinite;
+        }
+        .chat-message.status {
+            background: #fef3c7;
+            color: #d97706;
+            border: 1px solid #fde68a;
+            font-size: 0.85em;
+            text-align: left;
+            margin: 8px 0;
+            padding: 8px 12px;
+            border-radius: 8px;
+            animation: fadeIn 0.3s ease-in;
+        }
+        .progress-bar-inline {
+            width: 100%;
+            height: 4px;
+            background: #e5e7eb;
+            border-radius: 2px;
+            margin-top: 6px;
+            overflow: hidden;
+        }
+        .progress-fill-inline {
+            height: 100%;
+            background: linear-gradient(90deg, #10b981, #3b82f6);
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 2px;
         }
         .chat-input-container {
             display: flex;
@@ -477,6 +504,10 @@
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
     </style>
 </head>
@@ -992,6 +1023,12 @@
             addUserMessage(message);
             chatInput.value = '';
             
+            // 默认使用流式响应
+            await sendStreamMessage(message);
+        }
+
+        // 流式消息发送
+        async function sendStreamMessage(message) {
             // 显示打字指示器
             showTypingIndicator();
 
@@ -1008,8 +1045,17 @@
                     content: message
                 });
 
-                // 调用知识库检索API
-                const response = await fetch('/api/chat', {
+                // 创建助手消息元素，用于流式更新
+                const assistantMessageDiv = document.createElement('div');
+                assistantMessageDiv.className = 'chat-message assistant';
+                assistantMessageDiv.textContent = '';
+                chatMessages.appendChild(assistantMessageDiv);
+                
+                hideTypingIndicator();
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                // 使用 fetch 发送流式请求
+                const response = await fetch('/api/chat/stream', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1021,24 +1067,101 @@
                     })
                 });
 
-                const result = await response.json();
-                
-                hideTypingIndicator();
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
 
-                if (response.ok) {
-                    const assistantResponse = result.answer || '抱歉，我无法找到相关信息。';
-                    addAssistantMessage(assistantResponse);
-                    
-                    // 更新聊天历史
-                    chatHistory.push({ role: 'user', content: message });
-                    chatHistory.push({ role: 'assistant', content: assistantResponse });
-                    
-                    // 保持聊天历史在合理范围内（最近10轮对话）
-                    if (chatHistory.length > 20) {
-                        chatHistory = chatHistory.slice(-20);
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let assistantResponse = '';
+                let buffer = '';
+                let isGenerating = false;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || ''; // 保留不完整的行
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.slice(6);
+                            if (data.trim() === '') continue;
+
+                            try {
+                                const parsedData = JSON.parse(data);
+                                
+                                if (parsedData.error) {
+                                    assistantMessageDiv.textContent = `抱歉，发生了错误：${parsedData.error}`;
+                                    return;
+                                }
+
+                                if (parsedData.status) {
+                                    // 显示状态信息
+                                    const progressText = parsedData.progress ? ` (${parsedData.progress}%)` : '';
+                                    if (!isGenerating) {
+                                        assistantMessageDiv.textContent = `🔄 ${parsedData.status}${progressText}`;
+                                        assistantMessageDiv.className = 'chat-message status';
+                                        
+                                        // 添加进度条
+                                        if (parsedData.progress) {
+                                            const progressBar = document.createElement('div');
+                                            progressBar.className = 'progress-bar-inline';
+                                            const progressFill = document.createElement('div');
+                                            progressFill.className = 'progress-fill-inline';
+                                            progressFill.style.width = parsedData.progress + '%';
+                                            progressBar.appendChild(progressFill);
+                                            assistantMessageDiv.appendChild(progressBar);
+                                        }
+                                    } else {
+                                        // 如果已经开始生成回答，创建新的状态消息
+                                        const statusDiv = document.createElement('div');
+                                        statusDiv.className = 'chat-message status';
+                                        statusDiv.textContent = `🔄 ${parsedData.status}${progressText}`;
+                                        
+                                        // 添加进度条
+                                        if (parsedData.progress) {
+                                            const progressBar = document.createElement('div');
+                                            progressBar.className = 'progress-bar-inline';
+                                            const progressFill = document.createElement('div');
+                                            progressFill.className = 'progress-fill-inline';
+                                            progressFill.style.width = parsedData.progress + '%';
+                                            progressBar.appendChild(progressFill);
+                                            statusDiv.appendChild(progressBar);
+                                        }
+                                        
+                                        chatMessages.appendChild(statusDiv);
+                                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                                    }
+                                    continue;
+                                }
+
+                                if (parsedData.chunk) {
+                                    isGenerating = true;
+                                    assistantResponse += parsedData.chunk;
+                                    assistantMessageDiv.textContent = assistantResponse;
+                                    assistantMessageDiv.className = 'chat-message assistant';
+                                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                                }
+
+                                if (parsedData.done) {
+                                    // 更新聊天历史
+                                    chatHistory.push({ role: 'user', content: message });
+                                    chatHistory.push({ role: 'assistant', content: assistantResponse });
+                                    
+                                    // 保持聊天历史在合理范围内（最近10轮对话）
+                                    if (chatHistory.length > 20) {
+                                        chatHistory = chatHistory.slice(-20);
+                                    }
+                                    return;
+                                }
+                            } catch (parseError) {
+                                console.error('Failed to parse chunk data:', parseError, 'Raw data:', data);
+                            }
+                        }
                     }
-                } else {
-                    addAssistantMessage(`抱歉，发生了错误：${result.error || '未知错误'}`);
                 }
             } catch (error) {
                 hideTypingIndicator();

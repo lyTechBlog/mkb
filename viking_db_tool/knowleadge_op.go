@@ -602,6 +602,77 @@ func ChatCompletionStream(ctx context.Context, messages []MessageParam) (answer 
 	return answerBuilder.String(), &modelTokenUsage, nil
 }
 
+// ChatCompletionStreamWithCallback 流式调用，支持回调函数
+func ChatCompletionStreamWithCallback(ctx context.Context, messages []MessageParam, callback func(chunk string, isDone bool, usage *ModelTokenUsage, err error)) error {
+	chatCompletionReqParams := GenerateChatCompletionReqParams(true, messages)
+	chatCompletionReqParamsBytes, err := SerializeToJsonBytesUseNumber(chatCompletionReqParams)
+	if err != nil {
+		callback("", false, nil, err)
+		return err
+	}
+
+	request := PrepareRequest("POST", ChatCompletionPath, chatCompletionReqParamsBytes)
+	client := &http.Client{
+		Timeout: time.Second * 120,
+	}
+	request.Header.Set("Accept", "text/event-stream")
+	resp, err := client.Do(request)
+	if err != nil {
+		callback("", false, nil, err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	// 读取流式返回
+	scanner := bufio.NewScanner(resp.Body)
+	// 指定分隔符函数
+	scanner.Split(scanDoubleCRLF)
+
+	var modelTokenUsage ModelTokenUsage
+
+	buf := make([]byte, 0, 150*1024)
+	scanner.Buffer(buf, 150*1024) // 可以按需调整scanner的大小
+
+	// 读取数据
+	for scanner.Scan() {
+		streamLine := scanner.Text()
+		if len(streamLine) < 5 {
+			continue
+		}
+		streamJson := streamLine[5:]
+		var chatCompletionResponse CollectionChatCompletionResponse
+		err := ParseJsonUseNumber([]byte(streamJson), &chatCompletionResponse)
+		if err != nil {
+			callback("", false, nil, err)
+			return err
+		}
+
+		// 获取流式返回的内容
+		chunk := chatCompletionResponse.Data.GenerateAnswer
+
+		// 检查是否包含token使用信息（通常是最后一条消息）
+		var usage *ModelTokenUsage
+		isDone := false
+		if chatCompletionResponse.Data.Usage != "" {
+			err := ParseJsonUseNumber([]byte(chatCompletionResponse.Data.Usage), &modelTokenUsage)
+			if err == nil {
+				usage = &modelTokenUsage
+				isDone = true // 有使用信息说明是最后一条消息
+			}
+		}
+
+		// 调用回调函数
+		callback(chunk, isDone, usage, nil)
+	}
+
+	if err := scanner.Err(); err != nil {
+		callback("", false, nil, err)
+		return err
+	}
+
+	return nil
+}
+
 // getContentForPrompt 生成内容提示
 func getContentForPrompt(item *CollectionSearchResponseItem, imageNum int) string {
 	content := item.Content

@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,7 +17,9 @@ import (
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/utils"
+	"github.com/cloudwego/hertz/pkg/network/standard"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
+	"github.com/cloudwego/hertz/pkg/protocol/http1/resp"
 	"github.com/hertz-contrib/cors"
 )
 
@@ -27,6 +31,7 @@ const (
 // getDocTypeByExtension 根据文件后缀确定文档类型
 func getDocTypeByExtension(filename string) string {
 	ext := strings.ToLower(filepath.Ext(filename))
+	log.Printf("INFO: Determining document type for file: %s, extension: %s", filename, ext)
 
 	// 非结构化文档支持类型
 	unstructuredTypes := map[string]string{
@@ -48,30 +53,38 @@ func getDocTypeByExtension(filename string) string {
 
 	// 特殊处理：faq.xlsx 文件
 	if strings.Contains(strings.ToLower(filename), "faq") && ext == ".xlsx" {
+		log.Printf("INFO: Detected FAQ file, returning type: faq.xlsx")
 		return "faq.xlsx"
 	}
 
 	// 先检查非结构化类型
 	if docType, exists := unstructuredTypes[ext]; exists {
+		log.Printf("INFO: File classified as unstructured document type: %s", docType)
 		return docType
 	}
 
 	// 再检查结构化类型
 	if docType, exists := structuredTypes[ext]; exists {
+		log.Printf("INFO: File classified as structured document type: %s", docType)
 		return docType
 	}
 
 	// 默认返回 txt
+	log.Printf("INFO: File type not recognized, using default type: txt")
 	return "txt"
 }
 
 func main() {
+	log.Printf("INFO: Starting MKB server...")
+
 	// 创建上传目录
 	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		log.Printf("ERROR: Failed to create upload directory: %v", err)
 		panic(fmt.Sprintf("Failed to create upload directory: %v", err))
 	}
+	log.Printf("INFO: Upload directory created/verified: %s", uploadDir)
 
-	h := server.Default(server.WithHostPorts("0.0.0.0:8888"))
+	h := server.Default(server.WithHostPorts("127.0.0.1:8888"), server.WithStreamBody(true), server.WithTransport(standard.NewTransporter))
 
 	// 配置CORS
 	h.Use(cors.New(cors.Config{
@@ -82,14 +95,17 @@ func main() {
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
+	log.Printf("INFO: CORS middleware configured")
 
 	// 根路径返回前端页面
 	h.GET("/mkb", func(ctx context.Context, c *app.RequestContext) {
+		log.Printf("INFO: Serving frontend page for request: %s %s", c.Method(), c.Request.URI().String())
 		c.File("./static/index.html")
 	})
 
 	// 静态文件服务
 	h.Static("/static", "./static")
+	log.Printf("INFO: Static file serving configured for /static")
 
 	// API路由
 	api := h.Group("/api")
@@ -99,54 +115,81 @@ func main() {
 		api.GET("/files/:filename", downloadFile)
 		api.DELETE("/files/:filename", deleteFile)
 		api.POST("/chat", chatWithKnowledgeBase)
+		api.POST("/chat/stream", chatWithKnowledgeBaseStream)
 		api.GET("/documents/status", getDocumentStatus)
 	}
+	log.Printf("INFO: API routes configured")
 
 	// 健康检查
 	h.GET("/health", func(ctx context.Context, c *app.RequestContext) {
+		log.Printf("INFO: Health check request: %s %s", c.Method(), c.Request.URI().String())
 		c.JSON(consts.StatusOK, utils.H{
 			"status": "ok",
 			"time":   time.Now().Format(time.RFC3339),
 		})
 	})
 
-	fmt.Println("Server starting on http://0.0.0.0:8888 (accessible from external IPs)")
+	// 测试流式输出
+	h.GET("/flush/chunk", func(ctx context.Context, c *app.RequestContext) {
+		// Hijack the writer of response
+		c.Response.HijackWriter(resp.NewChunkedBodyWriter(&c.Response, c.GetWriter()))
+
+		for i := 0; i < 10; i++ {
+			c.Write([]byte(fmt.Sprintf("chunk %d: %s", i, strings.Repeat("hi~", i)))) // nolint: errcheck
+			c.Flush()                                                                 // nolint: errcheck
+			time.Sleep(200 * time.Millisecond)
+		}
+	})
+
+	log.Printf("INFO: Server starting on http://0.0.0.0:8888 (accessible from external IPs)")
 	h.Spin()
 }
 
 // 文件上传处理
 func uploadFile(ctx context.Context, c *app.RequestContext) {
+	log.Printf("INFO: [UPLOAD] Starting file upload request: %s %s", c.Method(), c.Request.URI().String())
+	startTime := time.Now()
+
 	// 解析multipart表单
 	form, err := c.MultipartForm()
 	if err != nil {
+		log.Printf("ERROR: [UPLOAD] Failed to parse form: %v", err)
 		c.JSON(consts.StatusBadRequest, utils.H{
 			"error": "Failed to parse form: " + err.Error(),
 		})
 		return
 	}
+	log.Printf("INFO: [UPLOAD] Multipart form parsed successfully")
 
 	// 获取用户ID
 	userIDs := form.Value["user_id"]
 	if len(userIDs) == 0 || userIDs[0] == "" {
+		log.Printf("ERROR: [UPLOAD] User ID is missing or empty")
 		c.JSON(consts.StatusBadRequest, utils.H{
 			"error": "User ID is required",
 		})
 		return
 	}
 	userID := userIDs[0]
+	log.Printf("INFO: [UPLOAD] Processing upload for user ID: %s", userID)
 
 	files := form.File["file"]
 	if len(files) == 0 {
+		log.Printf("ERROR: [UPLOAD] No files uploaded")
 		c.JSON(consts.StatusBadRequest, utils.H{
 			"error": "No file uploaded",
 		})
 		return
 	}
+	log.Printf("INFO: [UPLOAD] Found %d files to process", len(files))
 
 	var uploadedFiles []map[string]interface{}
-	for _, file := range files {
+	for i, file := range files {
+		log.Printf("INFO: [UPLOAD] Processing file %d/%d: %s (size: %d bytes)", i+1, len(files), file.Filename, file.Size)
+
 		// 检查文件大小
 		if file.Size > maxFileSize {
+			log.Printf("ERROR: [UPLOAD] File %s exceeds maximum size: %d > %d", file.Filename, file.Size, maxFileSize)
 			c.JSON(consts.StatusBadRequest, utils.H{
 				"error": fmt.Sprintf("File %s is too large. Max size is %d bytes", file.Filename, maxFileSize),
 			})
@@ -156,10 +199,12 @@ func uploadFile(ctx context.Context, c *app.RequestContext) {
 		// 创建临时文件路径
 		filename := filepath.Base(file.Filename)
 		tempFilePath := filepath.Join(uploadDir, filename)
+		log.Printf("INFO: [UPLOAD] Creating temporary file: %s", tempFilePath)
 
 		// 打开源文件
 		src, err := file.Open()
 		if err != nil {
+			log.Printf("ERROR: [UPLOAD] Failed to open uploaded file %s: %v", file.Filename, err)
 			c.JSON(consts.StatusInternalServerError, utils.H{
 				"error": "Failed to open uploaded file: " + err.Error(),
 			})
@@ -170,6 +215,7 @@ func uploadFile(ctx context.Context, c *app.RequestContext) {
 		// 创建临时文件
 		dst, err := os.Create(tempFilePath)
 		if err != nil {
+			log.Printf("ERROR: [UPLOAD] Failed to create temporary file %s: %v", tempFilePath, err)
 			c.JSON(consts.StatusInternalServerError, utils.H{
 				"error": "Failed to create temporary file: " + err.Error(),
 			})
@@ -179,27 +225,33 @@ func uploadFile(ctx context.Context, c *app.RequestContext) {
 		// 复制文件内容到临时文件
 		if _, err = io.Copy(dst, src); err != nil {
 			dst.Close()
+			log.Printf("ERROR: [UPLOAD] Failed to save temporary file %s: %v", tempFilePath, err)
 			c.JSON(consts.StatusInternalServerError, utils.H{
 				"error": "Failed to save temporary file: " + err.Error(),
 			})
 			return
 		}
 		dst.Close()
+		log.Printf("INFO: [UPLOAD] Temporary file created successfully: %s", tempFilePath)
 
 		// 调用TOS上传方法，在路径中包含用户ID
 		objectKey := fmt.Sprintf("uploads/%s/%s", userID, filename)
+		log.Printf("INFO: [UPLOAD] Uploading to TOS with object key: %s", objectKey)
 		preSignedURL, err := tos_tool.UploadFileWithEnvConfig(tempFilePath, objectKey)
 		if err != nil {
 			// 清理临时文件
 			os.Remove(tempFilePath)
+			log.Printf("ERROR: [UPLOAD] Failed to upload to TOS: %v", err)
 			c.JSON(consts.StatusInternalServerError, utils.H{
 				"error": "Failed to upload to TOS: " + err.Error(),
 			})
 			return
 		}
+		log.Printf("INFO: [UPLOAD] Successfully uploaded to TOS, pre-signed URL generated")
 
 		// 清理临时文件
 		os.Remove(tempFilePath)
+		log.Printf("INFO: [UPLOAD] Temporary file cleaned up: %s", tempFilePath)
 
 		uploadedFiles = append(uploadedFiles, map[string]interface{}{
 			"name":    filename,
@@ -210,8 +262,10 @@ func uploadFile(ctx context.Context, c *app.RequestContext) {
 		// 检查知识库是否存在
 		knowledgeBaseName := "kb_" + userID // 使用用户id作为知识库名称
 		project := "default"
+		log.Printf("INFO: [UPLOAD] Checking knowledge base existence: %s in project: %s", knowledgeBaseName, project)
 		exists, resourceID, err := viking_db_tool.CheckKnowledgeBaseExists(ctx, knowledgeBaseName, project)
 		if err != nil {
+			log.Printf("ERROR: [UPLOAD] Failed to check knowledge base existence: %v", err)
 			c.JSON(consts.StatusInternalServerError, utils.H{
 				"error": "Failed to check knowledge base existence: " + err.Error(),
 			})
@@ -220,23 +274,26 @@ func uploadFile(ctx context.Context, c *app.RequestContext) {
 
 		if !exists {
 			// 如果知识库不存在，创建知识库
+			log.Printf("INFO: [UPLOAD] Knowledge base does not exist, creating new one: %s", knowledgeBaseName)
 			createResp, err := viking_db_tool.CreateKnowledgeBase(ctx, knowledgeBaseName, "Knowledge base for user documents", "unstructured_data", project)
 			if err != nil {
+				log.Printf("ERROR: [UPLOAD] Failed to create knowledge base: %v", err)
 				c.JSON(consts.StatusInternalServerError, utils.H{
 					"error": "Failed to create knowledge base: " + err.Error(),
 				})
 				return
 			}
 			if createResp.Code != 0 {
+				log.Printf("ERROR: [UPLOAD] Failed to create knowledge base, code: %d, message: %s", createResp.Code, createResp.Message)
 				c.JSON(consts.StatusInternalServerError, utils.H{
 					"error": "Failed to create knowledge base: " + createResp.Message,
 				})
 				return
 			}
 			resourceID = createResp.Data.ResourceID
-			fmt.Printf("Created knowledge base: %s with ResourceID: %s\n", knowledgeBaseName, resourceID)
+			log.Printf("INFO: [UPLOAD] Successfully created knowledge base: %s with ResourceID: %s", knowledgeBaseName, resourceID)
 		} else {
-			fmt.Printf("Knowledge base exists: %s with ResourceID: %s\n", knowledgeBaseName, resourceID)
+			log.Printf("INFO: [UPLOAD] Knowledge base exists: %s with ResourceID: %s", knowledgeBaseName, resourceID)
 		}
 
 		// 上传文件到Viking DB
@@ -249,6 +306,7 @@ func uploadFile(ctx context.Context, c *app.RequestContext) {
 			viking_db_tool.CreateStringMetaField("用户ID", userID),
 		}
 
+		log.Printf("INFO: [UPLOAD] Uploading document to Viking DB - docID: %s, docName: %s, docType: %s", docID, docName, docType)
 		// 上传文件到Viking DB
 		response, err := viking_db_tool.UploadDocumentByURL(
 			ctx,
@@ -261,15 +319,18 @@ func uploadFile(ctx context.Context, c *app.RequestContext) {
 		)
 
 		if err != nil {
+			log.Printf("ERROR: [UPLOAD] Failed to upload to Viking DB: %v", err)
 			c.JSON(consts.StatusInternalServerError, utils.H{
 				"error": "Failed to upload to Viking DB: " + err.Error(),
 			})
 			return
 		}
 
-		fmt.Printf("Uploaded document to Viking DB: %s\n", response)
+		log.Printf("INFO: [UPLOAD] Successfully uploaded document to Viking DB: %s", response)
 	}
 
+	duration := time.Since(startTime)
+	log.Printf("INFO: [UPLOAD] Upload request completed successfully in %v for user %s, uploaded %d files", duration, userID, len(uploadedFiles))
 	c.JSON(consts.StatusOK, utils.H{
 		"message": "Files uploaded successfully to TOS",
 		"files":   uploadedFiles,
@@ -278,19 +339,26 @@ func uploadFile(ctx context.Context, c *app.RequestContext) {
 
 // 列出所有文件
 func listFiles(ctx context.Context, c *app.RequestContext) {
+	log.Printf("INFO: [LIST_FILES] Starting list files request: %s %s", c.Method(), c.Request.URI().String())
+	startTime := time.Now()
+
 	// 获取用户ID参数
 	userID := c.Query("user_id")
 	if userID == "" {
+		log.Printf("ERROR: [LIST_FILES] User ID is missing")
 		c.JSON(consts.StatusBadRequest, utils.H{
 			"error": "User ID is required",
 		})
 		return
 	}
+	log.Printf("INFO: [LIST_FILES] Listing files for user ID: %s", userID)
 
 	// 使用TOS工具列出用户上传的文件
 	prefix := fmt.Sprintf("uploads/%s/", userID)
+	log.Printf("INFO: [LIST_FILES] Searching TOS with prefix: %s", prefix)
 	files, err := tos_tool.ListFilesWithEnvConfig(prefix)
 	if err != nil {
+		log.Printf("ERROR: [LIST_FILES] Failed to list files from TOS: %v", err)
 		c.JSON(consts.StatusInternalServerError, utils.H{
 			"error": "Failed to list files from TOS: " + err.Error(),
 		})
@@ -302,6 +370,8 @@ func listFiles(ctx context.Context, c *app.RequestContext) {
 		files[i]["user_id"] = userID
 	}
 
+	duration := time.Since(startTime)
+	log.Printf("INFO: [LIST_FILES] List files request completed in %v for user %s, found %d files", duration, userID, len(files))
 	c.JSON(consts.StatusOK, utils.H{
 		"files":   files,
 		"user_id": userID,
@@ -311,7 +381,10 @@ func listFiles(ctx context.Context, c *app.RequestContext) {
 // 下载文件
 func downloadFile(ctx context.Context, c *app.RequestContext) {
 	filename := c.Param("filename")
+	log.Printf("INFO: [DOWNLOAD] Starting file download request: %s %s, filename: %s", c.Method(), c.Request.URI().String(), filename)
+
 	if filename == "" {
+		log.Printf("ERROR: [DOWNLOAD] Filename is missing")
 		c.JSON(consts.StatusBadRequest, utils.H{
 			"error": "Filename is required",
 		})
@@ -319,22 +392,29 @@ func downloadFile(ctx context.Context, c *app.RequestContext) {
 	}
 
 	filepath := filepath.Join(uploadDir, filename)
+	log.Printf("INFO: [DOWNLOAD] Attempting to serve file: %s", filepath)
 
 	// 检查文件是否存在
 	if _, err := os.Stat(filepath); os.IsNotExist(err) {
+		log.Printf("ERROR: [DOWNLOAD] File not found: %s", filepath)
 		c.JSON(consts.StatusNotFound, utils.H{
 			"error": "File not found",
 		})
 		return
 	}
 
+	log.Printf("INFO: [DOWNLOAD] Serving file: %s", filepath)
 	c.File(filepath)
 }
 
 // 删除文件
 func deleteFile(ctx context.Context, c *app.RequestContext) {
 	filename := c.Param("filename")
+	log.Printf("INFO: [DELETE] Starting file delete request: %s %s, filename: %s", c.Method(), c.Request.URI().String(), filename)
+	startTime := time.Now()
+
 	if filename == "" {
+		log.Printf("ERROR: [DELETE] Filename is missing")
 		c.JSON(consts.StatusBadRequest, utils.H{
 			"error": "Filename is required",
 		})
@@ -344,31 +424,39 @@ func deleteFile(ctx context.Context, c *app.RequestContext) {
 	// 获取用户ID参数
 	userID := c.Query("user_id")
 	if userID == "" {
+		log.Printf("ERROR: [DELETE] User ID is missing")
 		c.JSON(consts.StatusBadRequest, utils.H{
 			"error": "User ID is required",
 		})
 		return
 	}
+	log.Printf("INFO: [DELETE] Deleting file %s for user ID: %s", filename, userID)
 
 	// 构建TOS对象键
 	objectKey := fmt.Sprintf("uploads/%s/%s", userID, filename)
+	log.Printf("INFO: [DELETE] Deleting from TOS with object key: %s", objectKey)
 
 	// 删除TOS中的文件
 	err := tos_tool.DeleteFileWithEnvConfig(objectKey)
 	if err != nil {
+		log.Printf("ERROR: [DELETE] Failed to delete file from TOS: %v", err)
 		c.JSON(consts.StatusInternalServerError, utils.H{
 			"error": "Failed to delete file from TOS: " + err.Error(),
 		})
 		return
 	}
+	log.Printf("INFO: [DELETE] Successfully deleted file from TOS")
 
 	// 检查知识库是否存在
 	knowledgeBaseName := "kb_" + userID
 	project := "default"
+	log.Printf("INFO: [DELETE] Checking knowledge base existence: %s in project: %s", knowledgeBaseName, project)
 	exists, resourceID, err := viking_db_tool.CheckKnowledgeBaseExists(ctx, knowledgeBaseName, project)
 	if err != nil {
 		// 如果检查知识库存在性失败，记录错误但不影响TOS删除的成功响应
-		fmt.Printf("Failed to check knowledge base existence: %v\n", err)
+		log.Printf("WARN: [DELETE] Failed to check knowledge base existence: %v", err)
+		duration := time.Since(startTime)
+		log.Printf("INFO: [DELETE] Delete request completed in %v for user %s (TOS only)", duration, userID)
 		c.JSON(consts.StatusOK, utils.H{
 			"message": "File deleted successfully from TOS, but failed to check knowledge base",
 		})
@@ -378,12 +466,15 @@ func deleteFile(ctx context.Context, c *app.RequestContext) {
 	if exists {
 		// 生成与上传时相同的docID
 		docID := regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(filename, "")
+		log.Printf("INFO: [DELETE] Deleting document from knowledge base - docID: %s", docID)
 
 		// 删除知识库中的文档
 		deleteResp, err := viking_db_tool.DeleteDocumentByResourceID(ctx, resourceID, docID)
 		if err != nil {
 			// 如果删除知识库文档失败，记录错误但不影响TOS删除的成功响应
-			fmt.Printf("Failed to delete document from knowledge base: %v\n", err)
+			log.Printf("WARN: [DELETE] Failed to delete document from knowledge base: %v", err)
+			duration := time.Since(startTime)
+			log.Printf("INFO: [DELETE] Delete request completed in %v for user %s (TOS only)", duration, userID)
 			c.JSON(consts.StatusOK, utils.H{
 				"message": "File deleted successfully from TOS, but failed to delete from knowledge base",
 			})
@@ -391,19 +482,26 @@ func deleteFile(ctx context.Context, c *app.RequestContext) {
 		}
 
 		if deleteResp.Code != 0 {
-			fmt.Printf("Failed to delete document from knowledge base: code %d, message %s\n", deleteResp.Code, deleteResp.Message)
+			log.Printf("WARN: [DELETE] Failed to delete document from knowledge base, code: %d, message: %s", deleteResp.Code, deleteResp.Message)
+			duration := time.Since(startTime)
+			log.Printf("INFO: [DELETE] Delete request completed in %v for user %s (TOS only)", duration, userID)
 			c.JSON(consts.StatusOK, utils.H{
 				"message": "File deleted successfully from TOS, but failed to delete from knowledge base",
 			})
 			return
 		}
 
-		fmt.Printf("Successfully deleted document from knowledge base: %s\n", docID)
+		log.Printf("INFO: [DELETE] Successfully deleted document from knowledge base: %s", docID)
+		duration := time.Since(startTime)
+		log.Printf("INFO: [DELETE] Delete request completed in %v for user %s (TOS + Knowledge Base)", duration, userID)
 		c.JSON(consts.StatusOK, utils.H{
 			"message": "File deleted successfully from both TOS and knowledge base",
 		})
 	} else {
 		// 知识库不存在，只删除TOS文件
+		log.Printf("INFO: [DELETE] Knowledge base not found, only TOS file deleted")
+		duration := time.Since(startTime)
+		log.Printf("INFO: [DELETE] Delete request completed in %v for user %s (TOS only)", duration, userID)
 		c.JSON(consts.StatusOK, utils.H{
 			"message": "File deleted successfully from TOS (knowledge base not found)",
 		})
@@ -412,6 +510,9 @@ func deleteFile(ctx context.Context, c *app.RequestContext) {
 
 // 知识库对话处理
 func chatWithKnowledgeBase(ctx context.Context, c *app.RequestContext) {
+	log.Printf("INFO: [CHAT] Starting chat request: %s %s", c.Method(), c.Request.URI().String())
+	startTime := time.Now()
+
 	var request struct {
 		UserID   string                        `json:"user_id"`
 		Query    string                        `json:"query"`
@@ -419,6 +520,7 @@ func chatWithKnowledgeBase(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if err := c.BindJSON(&request); err != nil {
+		log.Printf("ERROR: [CHAT] Failed to bind JSON request: %v", err)
 		c.JSON(consts.StatusBadRequest, utils.H{
 			"error": "Invalid request format: " + err.Error(),
 		})
@@ -426,6 +528,7 @@ func chatWithKnowledgeBase(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if request.UserID == "" {
+		log.Printf("ERROR: [CHAT] User ID is missing")
 		c.JSON(consts.StatusBadRequest, utils.H{
 			"error": "User ID is required",
 		})
@@ -433,17 +536,22 @@ func chatWithKnowledgeBase(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if request.Query == "" {
+		log.Printf("ERROR: [CHAT] Query is missing")
 		c.JSON(consts.StatusBadRequest, utils.H{
 			"error": "Query is required",
 		})
 		return
 	}
 
+	log.Printf("INFO: [CHAT] Processing chat for user ID: %s, query: %s, messages count: %d", request.UserID, request.Query, len(request.Messages))
+
 	// 检查知识库是否存在
 	knowledgeBaseName := "kb_" + request.UserID
 	project := "default"
+	log.Printf("INFO: [CHAT] Checking knowledge base existence: %s in project: %s", knowledgeBaseName, project)
 	exists, resourceID, err := viking_db_tool.CheckKnowledgeBaseExists(ctx, knowledgeBaseName, project)
 	if err != nil {
+		log.Printf("ERROR: [CHAT] Failed to check knowledge base existence: %v", err)
 		c.JSON(consts.StatusInternalServerError, utils.H{
 			"error": "Failed to check knowledge base existence: " + err.Error(),
 		})
@@ -451,6 +559,7 @@ func chatWithKnowledgeBase(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if !exists {
+		log.Printf("ERROR: [CHAT] Knowledge base not found for user: %s", request.UserID)
 		c.JSON(consts.StatusNotFound, utils.H{
 			"error": "Knowledge base not found. Please upload some files first.",
 		})
@@ -462,6 +571,7 @@ func chatWithKnowledgeBase(ctx context.Context, c *app.RequestContext) {
 	viking_db_tool.Project = project
 	viking_db_tool.ResourceID = resourceID
 	viking_db_tool.Query = request.Query
+	log.Printf("INFO: [CHAT] Knowledge base parameters set - Collection: %s, Project: %s, ResourceID: %s", knowledgeBaseName, project, resourceID)
 
 	// 构建检索请求参数
 	searchReq := viking_db_tool.CollectionSearchKnowledgeRequest{
@@ -487,8 +597,10 @@ func chatWithKnowledgeBase(ctx context.Context, c *app.RequestContext) {
 	}
 
 	// 执行知识库检索
+	log.Printf("INFO: [CHAT] Executing knowledge base search...")
 	searchResp, err := viking_db_tool.SearchKnowledgeWithParams(ctx, searchReq)
 	if err != nil {
+		log.Printf("ERROR: [CHAT] Failed to search knowledge base: %v", err)
 		c.JSON(consts.StatusInternalServerError, utils.H{
 			"error": "Failed to search knowledge base: " + err.Error(),
 		})
@@ -496,25 +608,31 @@ func chatWithKnowledgeBase(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if searchResp.Code != 0 {
+		log.Printf("ERROR: [CHAT] Knowledge base search failed, code: %d, message: %s", searchResp.Code, searchResp.Message)
 		c.JSON(consts.StatusInternalServerError, utils.H{
 			"error": "Knowledge base search failed: " + searchResp.Message,
 		})
 		return
 	}
+	log.Printf("INFO: [CHAT] Knowledge base search completed successfully")
 
 	// 生成提示词
+	log.Printf("INFO: [CHAT] Generating prompt from search results...")
 	prompt, images, err := viking_db_tool.GeneratePrompt(searchResp)
 	if err != nil {
+		log.Printf("ERROR: [CHAT] Failed to generate prompt: %v", err)
 		c.JSON(consts.StatusInternalServerError, utils.H{
 			"error": "Failed to generate prompt: " + err.Error(),
 		})
 		return
 	}
+	log.Printf("INFO: [CHAT] Prompt generated successfully, images count: %d", len(images))
 
 	// 构建对话消息
 	var messages []viking_db_tool.MessageParam
 	if len(images) > 0 {
 		// 对于Vision模型，需要将图片链接拼接到Message中
+		log.Printf("INFO: [CHAT] Building multimodal message with %d images", len(images))
 		var multiModalMessage []*viking_db_tool.ChatCompletionMessageContentPart
 		multiModalMessage = append(multiModalMessage, &viking_db_tool.ChatCompletionMessageContentPart{
 			Type: viking_db_tool.ChatCompletionMessageContentPartTypeText,
@@ -539,6 +657,7 @@ func chatWithKnowledgeBase(ctx context.Context, c *app.RequestContext) {
 		}
 	} else {
 		// 普通文本LLM模型
+		log.Printf("INFO: [CHAT] Building text-only message")
 		messages = []viking_db_tool.MessageParam{
 			{
 				Role:    "system",
@@ -552,8 +671,10 @@ func chatWithKnowledgeBase(ctx context.Context, c *app.RequestContext) {
 	}
 
 	// 调用大模型生成回答
+	log.Printf("INFO: [CHAT] Calling LLM for response generation...")
 	chatResp, err := viking_db_tool.ChatCompletion(ctx, messages)
 	if err != nil {
+		log.Printf("ERROR: [CHAT] Failed to generate response: %v", err)
 		c.JSON(consts.StatusInternalServerError, utils.H{
 			"error": "Failed to generate response: " + err.Error(),
 		})
@@ -561,12 +682,15 @@ func chatWithKnowledgeBase(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if chatResp.Code != 0 {
+		log.Printf("ERROR: [CHAT] Chat completion failed, code: %d, message: %s", chatResp.Code, chatResp.Message)
 		c.JSON(consts.StatusInternalServerError, utils.H{
 			"error": "Chat completion failed: " + chatResp.Message,
 		})
 		return
 	}
 
+	duration := time.Since(startTime)
+	log.Printf("INFO: [CHAT] Chat request completed successfully in %v for user %s", duration, request.UserID)
 	// 返回生成的回答
 	c.JSON(consts.StatusOK, utils.H{
 		"answer": chatResp.Data.GenerateAnswer,
@@ -574,22 +698,270 @@ func chatWithKnowledgeBase(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
+// 流式知识库对话处理
+func chatWithKnowledgeBaseStream(ctx context.Context, c *app.RequestContext) {
+	// Hijack the writer of response
+	c.Response.HijackWriter(resp.NewChunkedBodyWriter(&c.Response, c.GetWriter()))
+
+	log.Printf("INFO: [CHAT_STREAM] Starting streaming chat request: %s %s", c.Method(), c.Request.URI().String())
+	startTime := time.Now()
+
+	// 发送开始状态
+	c.Write([]byte("data: {\"status\": \"开始处理请求...\", \"progress\": 10}\n\n"))
+	time.Sleep(300 * time.Millisecond)
+	c.Flush()
+
+	var request struct {
+		UserID   string                        `json:"user_id"`
+		Query    string                        `json:"query"`
+		Messages []viking_db_tool.MessageParam `json:"messages"`
+	}
+
+	if err := c.BindJSON(&request); err != nil {
+		log.Printf("ERROR: [CHAT_STREAM] Failed to bind JSON request: %v", err)
+		c.Write([]byte(fmt.Sprintf("data: {\"error\": \"Invalid request format: %s\"}\n\n", err.Error())))
+		return
+	}
+
+	if request.UserID == "" {
+		log.Printf("ERROR: [CHAT_STREAM] User ID is missing")
+		c.Write([]byte("data: {\"error\": \"User ID is required\"}\n\n"))
+		return
+	}
+
+	if request.Query == "" {
+		log.Printf("ERROR: [CHAT_STREAM] Query is missing")
+		c.Write([]byte("data: {\"error\": \"Query is required\"}\n\n"))
+		return
+	}
+
+	log.Printf("INFO: [CHAT_STREAM] Processing streaming chat for user ID: %s, query: %s, messages count: %d", request.UserID, request.Query, len(request.Messages))
+
+	// 发送验证通过状态
+	c.Write([]byte("data: {\"status\": \"请求验证通过，开始处理...\", \"progress\": 20}\n\n"))
+	time.Sleep(300 * time.Millisecond)
+	c.Flush()
+
+	// 检查知识库是否存在
+	knowledgeBaseName := "kb_" + request.UserID
+	project := "default"
+
+	// 发送检查知识库状态
+	c.Write([]byte(fmt.Sprintf("data: {\"status\": \"正在检查知识库: %s\", \"progress\": 30}\n\n", knowledgeBaseName)))
+	time.Sleep(300 * time.Millisecond)
+	c.Flush()
+
+	log.Printf("INFO: [CHAT_STREAM] Checking knowledge base existence: %s in project: %s", knowledgeBaseName, project)
+	exists, resourceID, err := viking_db_tool.CheckKnowledgeBaseExists(ctx, knowledgeBaseName, project)
+	if err != nil {
+		log.Printf("ERROR: [CHAT_STREAM] Failed to check knowledge base existence: %v", err)
+		c.Write([]byte(fmt.Sprintf("data: {\"error\": \"Failed to check knowledge base existence: %s\"}\n\n", err.Error())))
+		return
+	}
+
+	if !exists {
+		log.Printf("ERROR: [CHAT_STREAM] Knowledge base not found for user: %s", request.UserID)
+		c.Write([]byte("data: {\"error\": \"Knowledge base not found. Please upload some files first.\"}\n\n"))
+		return
+	}
+
+	// 发送知识库存在状态
+	c.Write([]byte(fmt.Sprintf("data: {\"status\": \"知识库检查完成，资源ID: %s\", \"progress\": 40}\n\n", resourceID)))
+	time.Sleep(300 * time.Millisecond)
+	c.Flush()
+
+	// 设置知识库检索参数
+	viking_db_tool.CollectionName = knowledgeBaseName
+	viking_db_tool.Project = project
+	viking_db_tool.ResourceID = resourceID
+	viking_db_tool.Query = request.Query
+	log.Printf("INFO: [CHAT_STREAM] Knowledge base parameters set - Collection: %s, Project: %s, ResourceID: %s", knowledgeBaseName, project, resourceID)
+
+	// 构建检索请求参数
+	searchReq := viking_db_tool.CollectionSearchKnowledgeRequest{
+		Name:        knowledgeBaseName,
+		Project:     project,
+		ResourceId:  resourceID,
+		Query:       request.Query,
+		Limit:       5, // 限制返回结果数量
+		DenseWeight: 0.5,
+		Preprocessing: viking_db_tool.PreProcessing{
+			NeedInstruction:  true,
+			ReturnTokenUsage: true,
+			Rewrite:          false,
+			Messages:         request.Messages, // 使用传入的聊天历史
+		},
+		Postprocessing: viking_db_tool.PostProcessing{
+			RerankSwitch:        false,
+			RetrieveCount:       25,
+			GetAttachmentLink:   true,
+			ChunkGroup:          true,
+			ChunkDiffusionCount: 0,
+		},
+	}
+
+	// 执行知识库检索
+	c.Write([]byte("data: {\"status\": \"正在检索相关知识库内容...\", \"progress\": 50}\n\n"))
+	time.Sleep(300 * time.Millisecond)
+	c.Flush()
+
+	log.Printf("INFO: [CHAT_STREAM] Executing knowledge base search...")
+	searchResp, err := viking_db_tool.SearchKnowledgeWithParams(ctx, searchReq)
+	if err != nil {
+		log.Printf("ERROR: [CHAT_STREAM] Failed to search knowledge base: %v", err)
+		c.Write([]byte(fmt.Sprintf("data: {\"error\": \"Failed to search knowledge base: %s\"}\n\n", err.Error())))
+		return
+	}
+
+	if searchResp.Code != 0 {
+		log.Printf("ERROR: [CHAT_STREAM] Knowledge base search failed, code: %d, message: %s", searchResp.Code, searchResp.Message)
+		c.Write([]byte(fmt.Sprintf("data: {\"error\": \"Knowledge base search failed: %s\"}\n\n", searchResp.Message)))
+		return
+	}
+
+	// 发送检索完成状态
+	c.Write([]byte("data: {\"status\": \"知识库检索完成，正在生成提示词...\", \"progress\": 60}\n\n"))
+	time.Sleep(300 * time.Millisecond)
+	c.Flush()
+
+	log.Printf("INFO: [CHAT_STREAM] Knowledge base search completed successfully")
+
+	// 生成提示词
+	log.Printf("INFO: [CHAT_STREAM] Generating prompt from search results...")
+	prompt, images, err := viking_db_tool.GeneratePrompt(searchResp)
+	if err != nil {
+		log.Printf("ERROR: [CHAT_STREAM] Failed to generate prompt: %v", err)
+		c.Write([]byte(fmt.Sprintf("data: {\"error\": \"Failed to generate prompt: %s\"}\n\n", err.Error())))
+		return
+	}
+
+	// 发送提示词生成完成状态
+	if len(images) > 0 {
+		c.Write([]byte(fmt.Sprintf("data: {\"status\": \"提示词生成完成，检测到 %d 张图片，准备多模态对话...\", \"progress\": 70}\n\n", len(images))))
+	} else {
+		c.Write([]byte("data: {\"status\": \"提示词生成完成，准备文本对话...\", \"progress\": 70}\n\n"))
+	}
+	time.Sleep(300 * time.Millisecond)
+	c.Flush()
+
+	log.Printf("INFO: [CHAT_STREAM] Prompt generated successfully, images count: %d", len(images))
+
+	// 构建对话消息
+	var messages []viking_db_tool.MessageParam
+	if len(images) > 0 {
+		// 对于Vision模型，需要将图片链接拼接到Message中
+		log.Printf("INFO: [CHAT_STREAM] Building multimodal message with %d images", len(images))
+		var multiModalMessage []*viking_db_tool.ChatCompletionMessageContentPart
+		multiModalMessage = append(multiModalMessage, &viking_db_tool.ChatCompletionMessageContentPart{
+			Type: viking_db_tool.ChatCompletionMessageContentPartTypeText,
+			Text: request.Query,
+		})
+		for _, imageURL := range images {
+			multiModalMessage = append(multiModalMessage, &viking_db_tool.ChatCompletionMessageContentPart{
+				Type:     viking_db_tool.ChatCompletionMessageContentPartTypeImageURL,
+				ImageURL: &viking_db_tool.ChatMessageImageURL{URL: imageURL},
+			})
+		}
+
+		messages = []viking_db_tool.MessageParam{
+			{
+				Role:    "system",
+				Content: prompt,
+			},
+			{
+				Role:    "user",
+				Content: multiModalMessage,
+			},
+		}
+	} else {
+		// 普通文本LLM模型
+		log.Printf("INFO: [CHAT_STREAM] Building text-only message")
+		messages = []viking_db_tool.MessageParam{
+			{
+				Role:    "system",
+				Content: prompt,
+			},
+			{
+				Role:    "user",
+				Content: request.Query,
+			},
+		}
+	}
+
+	// 调用流式大模型生成回答
+	c.Write([]byte("data: {\"status\": \"正在调用AI模型生成回答...\", \"progress\": 80}\n\n"))
+	time.Sleep(300 * time.Millisecond)
+	c.Flush()
+
+	log.Printf("INFO: [CHAT_STREAM] Starting streaming LLM response generation...")
+	chunkCount := 0
+
+	err = viking_db_tool.ChatCompletionStreamWithCallback(ctx, messages, func(chunk string, isDone bool, usage *viking_db_tool.ModelTokenUsage, err error) {
+		if err != nil {
+			log.Printf("ERROR: [CHAT_STREAM] Stream callback error: %v", err)
+			c.Write([]byte(fmt.Sprintf("data: {\"error\": \"%s\"}\n\n", err.Error())))
+			return
+		}
+
+		if chunk != "" {
+			chunkCount++
+			log.Printf("INFO: [CHAT_STREAM] Sending chunk %d: %s", chunkCount, chunk)
+			// 发送文本块
+			chunkResponse := map[string]interface{}{
+				"chunk": chunk,
+				"done":  false,
+			}
+			chunkResponseJSON, _ := json.Marshal(chunkResponse)
+			c.Write([]byte("data: " + string(chunkResponseJSON) + "\n\n"))
+			c.Flush() // 立即发送数据
+		}
+
+		if isDone {
+			log.Printf("INFO: [CHAT_STREAM] Stream completed, total chunks: %d", chunkCount)
+			// 发送完成消息
+			finalResponse := map[string]interface{}{
+				"done":  true,
+				"usage": usage,
+			}
+			finalResponseJSON, _ := json.Marshal(finalResponse)
+			c.Write([]byte("data: " + string(finalResponseJSON) + "\n\n"))
+			c.Flush() // 立即发送数据
+		}
+	})
+
+	if err != nil {
+		log.Printf("ERROR: [CHAT_STREAM] Failed to generate streaming response: %v", err)
+		c.Write([]byte(fmt.Sprintf("data: {\"error\": \"Failed to generate response: %s\"}\n\n", err.Error())))
+		return
+	}
+
+	duration := time.Since(startTime)
+	log.Printf("INFO: [CHAT_STREAM] Streaming chat request completed in %v for user %s", duration, request.UserID)
+}
+
 // 查询文档处理状态
 func getDocumentStatus(ctx context.Context, c *app.RequestContext) {
+	log.Printf("INFO: [DOC_STATUS] Starting document status request: %s %s", c.Method(), c.Request.URI().String())
+	startTime := time.Now()
+
 	// 获取用户ID参数
 	userID := c.Query("user_id")
 	if userID == "" {
+		log.Printf("ERROR: [DOC_STATUS] User ID is missing")
 		c.JSON(consts.StatusBadRequest, utils.H{
 			"error": "User ID is required",
 		})
 		return
 	}
+	log.Printf("INFO: [DOC_STATUS] Getting document status for user ID: %s", userID)
 
 	// 检查知识库是否存在
 	knowledgeBaseName := "kb_" + userID
 	project := "default"
+	log.Printf("INFO: [DOC_STATUS] Checking knowledge base existence: %s in project: %s", knowledgeBaseName, project)
 	exists, resourceID, err := viking_db_tool.CheckKnowledgeBaseExists(ctx, knowledgeBaseName, project)
 	if err != nil {
+		log.Printf("ERROR: [DOC_STATUS] Failed to check knowledge base existence: %v", err)
 		c.JSON(consts.StatusInternalServerError, utils.H{
 			"error": "Failed to check knowledge base existence: " + err.Error(),
 		})
@@ -597,6 +969,7 @@ func getDocumentStatus(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if !exists {
+		log.Printf("ERROR: [DOC_STATUS] Knowledge base not found for user: %s", userID)
 		c.JSON(consts.StatusNotFound, utils.H{
 			"error": "Knowledge base not found",
 		})
@@ -604,14 +977,18 @@ func getDocumentStatus(ctx context.Context, c *app.RequestContext) {
 	}
 
 	// 获取文档处理状态
+	log.Printf("INFO: [DOC_STATUS] Getting document processing status for resource ID: %s", resourceID)
 	docStatus, err := viking_db_tool.GetDocumentProcessingStatus(ctx, resourceID)
 	if err != nil {
+		log.Printf("ERROR: [DOC_STATUS] Failed to get document status: %v", err)
 		c.JSON(consts.StatusInternalServerError, utils.H{
 			"error": "Failed to get document status: " + err.Error(),
 		})
 		return
 	}
 
+	duration := time.Since(startTime)
+	log.Printf("INFO: [DOC_STATUS] Document status request completed in %v for user %s", duration, userID)
 	c.JSON(consts.StatusOK, utils.H{
 		"document_status": docStatus,
 		"user_id":         userID,
