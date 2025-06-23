@@ -115,6 +115,8 @@ func main() {
 		api.GET("/files/:filename", downloadFile)
 		api.DELETE("/files/:filename", deleteFile)
 		api.POST("/chat/stream", chatWithKnowledgeBaseStream)
+		api.POST("/plan/stream", planWithKnowledgeBaseStream)
+		api.POST("/plan/step", handlePlanStep)
 		api.GET("/documents/status", getDocumentStatus)
 	}
 	log.Printf("INFO: API routes configured")
@@ -801,5 +803,328 @@ func getDocumentStatus(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, utils.H{
 		"document_status": docStatus,
 		"user_id":         userID,
+	})
+}
+
+// 非流式知识库计划处理
+func planWithKnowledgeBaseStream(ctx context.Context, c *app.RequestContext) {
+	log.Printf("INFO: [PLAN] Starting plan request: %s %s", c.Method(), c.Request.URI().String())
+	startTime := time.Now()
+
+	var request struct {
+		UserID   string                        `json:"user_id"`
+		Query    string                        `json:"query"`
+		Messages []viking_db_tool.MessageParam `json:"messages"`
+	}
+
+	if err := c.BindJSON(&request); err != nil {
+		log.Printf("ERROR: [PLAN] Failed to bind JSON request: %v", err)
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "Invalid request format: " + err.Error(),
+		})
+		return
+	}
+
+	if request.UserID == "" {
+		log.Printf("ERROR: [PLAN] User ID is missing")
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "User ID is required",
+		})
+		return
+	}
+
+	if request.Query == "" {
+		log.Printf("ERROR: [PLAN] Query is missing")
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "Query is required",
+		})
+		return
+	}
+
+	log.Printf("INFO: [PLAN] Processing plan for user ID: %s, query: %s, messages count: %d", request.UserID, request.Query, len(request.Messages))
+
+	// 检查知识库是否存在
+	knowledgeBaseName := "kb_" + request.UserID
+	project := "default"
+
+	log.Printf("INFO: [PLAN] Checking knowledge base existence: %s in project: %s", knowledgeBaseName, project)
+	exists, resourceID, err := viking_db_tool.CheckKnowledgeBaseExists(ctx, knowledgeBaseName, project)
+	if err != nil {
+		log.Printf("ERROR: [PLAN] Failed to check knowledge base existence: %v", err)
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "Failed to check knowledge base existence: " + err.Error(),
+		})
+		return
+	}
+
+	if !exists {
+		log.Printf("ERROR: [PLAN] Knowledge base not found for user: %s", request.UserID)
+		c.JSON(consts.StatusNotFound, utils.H{
+			"error": "Knowledge base not found. Please upload some files first.",
+		})
+		return
+	}
+
+	// 设置知识库检索参数
+	viking_db_tool.CollectionName = knowledgeBaseName
+	viking_db_tool.Project = project
+	viking_db_tool.ResourceID = resourceID
+	viking_db_tool.Query = request.Query
+	log.Printf("INFO: [PLAN] Knowledge base parameters set - Collection: %s, Project: %s, ResourceID: %s", knowledgeBaseName, project, resourceID)
+
+	// 构建检索请求参数
+	searchReq := viking_db_tool.CollectionSearchKnowledgeRequest{
+		Name:        knowledgeBaseName,
+		Project:     project,
+		ResourceId:  resourceID,
+		Query:       request.Query,
+		Limit:       5, // 限制返回结果数量
+		DenseWeight: 0.5,
+		Preprocessing: viking_db_tool.PreProcessing{
+			NeedInstruction:  true,
+			ReturnTokenUsage: true,
+			Rewrite:          false,
+			Messages:         request.Messages, // 使用传入的聊天历史
+		},
+		Postprocessing: viking_db_tool.PostProcessing{
+			RerankSwitch:        false,
+			RetrieveCount:       25,
+			GetAttachmentLink:   true,
+			ChunkGroup:          true,
+			ChunkDiffusionCount: 0,
+		},
+	}
+
+	// 执行知识库检索
+	log.Printf("INFO: [PLAN] Executing knowledge base search...")
+	searchResp, err := viking_db_tool.SearchKnowledgeWithParams(ctx, searchReq)
+	if err != nil {
+		log.Printf("ERROR: [PLAN] Failed to search knowledge base: %v", err)
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "Failed to search knowledge base: " + err.Error(),
+		})
+		return
+	}
+
+	if searchResp.Code != 0 {
+		log.Printf("ERROR: [PLAN] Knowledge base search failed, code: %d, message: %s", searchResp.Code, searchResp.Message)
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "Knowledge base search failed: " + searchResp.Message,
+		})
+		return
+	}
+
+	log.Printf("INFO: [PLAN] Knowledge base search completed successfully")
+
+	// 生成计划模式的提示词
+	log.Printf("INFO: [PLAN] Generating plan prompt from search results...")
+	prompt, images, err := generatePlanPrompt(searchResp)
+	if err != nil {
+		log.Printf("ERROR: [PLAN] Failed to generate plan prompt: %v", err)
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "Failed to generate plan prompt: " + err.Error(),
+		})
+		return
+	}
+
+	log.Printf("INFO: [PLAN] Plan prompt generated successfully, images count: %d", len(images))
+
+	// 构建对话消息
+	var messages []viking_db_tool.MessageParam
+	if len(images) > 0 {
+		// 对于Vision模型，需要将图片链接拼接到Message中
+		log.Printf("INFO: [PLAN] Building multimodal message with %d images", len(images))
+		var multiModalMessage []*viking_db_tool.ChatCompletionMessageContentPart
+		multiModalMessage = append(multiModalMessage, &viking_db_tool.ChatCompletionMessageContentPart{
+			Type: viking_db_tool.ChatCompletionMessageContentPartTypeText,
+			Text: request.Query,
+		})
+		for _, imageURL := range images {
+			multiModalMessage = append(multiModalMessage, &viking_db_tool.ChatCompletionMessageContentPart{
+				Type:     viking_db_tool.ChatCompletionMessageContentPartTypeImageURL,
+				ImageURL: &viking_db_tool.ChatMessageImageURL{URL: imageURL},
+			})
+		}
+
+		messages = []viking_db_tool.MessageParam{
+			{
+				Role:    "system",
+				Content: prompt,
+			},
+			{
+				Role:    "user",
+				Content: multiModalMessage,
+			},
+		}
+	} else {
+		// 普通文本LLM模型
+		log.Printf("INFO: [PLAN] Building text-only message")
+		messages = []viking_db_tool.MessageParam{
+			{
+				Role:    "system",
+				Content: prompt,
+			},
+			{
+				Role:    "user",
+				Content: request.Query,
+			},
+		}
+	}
+
+	// 调用非流式大模型生成计划
+	log.Printf("INFO: [PLAN] Starting LLM plan generation...")
+	response, err := viking_db_tool.ChatCompletion(ctx, messages)
+	if err != nil {
+		log.Printf("ERROR: [PLAN] Failed to generate plan: %v", err)
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "Failed to generate plan: " + err.Error(),
+		})
+		return
+	}
+
+	if response.Code != 0 {
+		log.Printf("ERROR: [PLAN] LLM response failed, code: %d, message: %s", response.Code, response.Message)
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "LLM response failed: " + response.Message,
+		})
+		return
+	}
+
+	duration := time.Since(startTime)
+	log.Printf("INFO: [PLAN] Plan request completed in %v for user %s", duration, request.UserID)
+
+	c.JSON(consts.StatusOK, utils.H{
+		"plan":     response.Data.GenerateAnswer,
+		"usage":    response.Data.Usage,
+		"user_id":  request.UserID,
+		"duration": duration.String(),
+	})
+}
+
+// 生成计划模式的提示词
+func generatePlanPrompt(resp *viking_db_tool.CollectionSearchKnowledgeResponse) (string, []string, error) {
+	if resp == nil {
+		return "", nil, fmt.Errorf("response is nil")
+	}
+	if resp.Code != 0 {
+		return "", nil, fmt.Errorf(resp.Message)
+	}
+
+	var promptBuilder strings.Builder
+	var imageURLs []string
+	usingVLM := strings.Contains(viking_db_tool.ModelName, "vision")
+	imageCnt := 0
+
+	// 计划模式的系统提示词
+	promptBuilder.WriteString(`# 任务
+你是一位专业的项目规划师和任务分解专家。你的任务是根据用户的目标和需求，制定一个详细的执行计划。这些计划的每一步，我会让agent去执行，所以请确保计划的每一步都是可执行的。
+
+你的计划需要满足以下要求：
+1. 将用户的目标分解为具体的、可执行的步骤
+2. 基于提供的参考资料，确保计划的可行性和准确性
+
+# 输出格式
+请严格按照以下JSON格式输出执行计划，不要包含任何其他文本：
+
+{
+  "goal_analysis": "分析用户的具体目标和要求",
+  "steps": [
+    {
+		"step_number": 1,
+		"title": "步骤标题",
+		"description": "具体操作描述",
+		"expected_outcome": "可衡量的成果",
+    }
+  ],
+}
+
+# 参考资料
+<context>
+`)
+
+	// 添加检索到的内容
+	for _, item := range resp.Data.ResultList {
+		if item.Content != "" {
+			content := getContentForPrompt(item, imageCnt)
+			promptBuilder.WriteString(content)
+			promptBuilder.WriteString("\n\n")
+		}
+
+		// 处理图片
+		if usingVLM && len(item.ChunkAttachmentList) > 0 && item.ChunkAttachmentList[0].Link != "" {
+			imageURLs = append(imageURLs, item.ChunkAttachmentList[0].Link)
+			imageCnt++
+		}
+	}
+
+	promptBuilder.WriteString(`</context>
+
+现在请你根据提供的参考资料，为用户制定一个详细的执行计划。`)
+
+	return promptBuilder.String(), imageURLs, nil
+}
+
+// getContentForPrompt 生成内容提示
+func getContentForPrompt(item *viking_db_tool.CollectionSearchResponseItem, imageNum int) string {
+	content := item.Content
+
+	if item.OriginalQuestion != "" {
+		return fmt.Sprintf("当询问到相似问题时，请参考对应答案进行回答：问题：\"%s\"。答案：\"%s\"",
+			item.OriginalQuestion, content)
+	}
+
+	if imageNum > 0 && len(item.ChunkAttachmentList) > 0 && item.ChunkAttachmentList[0].Link != "" {
+		placeholder := fmt.Sprintf("<img>图片%d</img>", imageNum)
+		return content + placeholder
+	}
+
+	return content
+}
+
+// 处理计划步骤点击事件
+func handlePlanStep(ctx context.Context, c *app.RequestContext) {
+	log.Printf("INFO: [PLAN_STEP] Starting plan step request: %s %s", c.Method(), c.Request.URI().String())
+	startTime := time.Now()
+
+	var request struct {
+		UserID          string `json:"user_id"`
+		StepNumber      int    `json:"step_number"`
+		Title           string `json:"title"`
+		Description     string `json:"description"`
+		ExpectedOutcome string `json:"expected_outcome"`
+	}
+
+	if err := c.BindJSON(&request); err != nil {
+		log.Printf("ERROR: [PLAN_STEP] Failed to bind JSON request: %v", err)
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "Invalid request format: " + err.Error(),
+		})
+		return
+	}
+
+	if request.UserID == "" {
+		log.Printf("ERROR: [PLAN_STEP] User ID is missing")
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "User ID is required",
+		})
+		return
+	}
+
+	log.Printf("INFO: [PLAN_STEP] User %s clicked step %d: %s", request.UserID, request.StepNumber, request.Title)
+	log.Printf("INFO: [PLAN_STEP] Step details - Description: %s, Expected Outcome: %s", request.Description, request.ExpectedOutcome)
+
+	duration := time.Since(startTime)
+	log.Printf("INFO: [PLAN_STEP] Plan step request completed in %v for user %s", duration, request.UserID)
+
+	c.JSON(consts.StatusOK, utils.H{
+		"message": "Step clicked successfully",
+		"step_info": utils.H{
+			"step_number":      request.StepNumber,
+			"title":            request.Title,
+			"description":      request.Description,
+			"expected_outcome": request.ExpectedOutcome,
+		},
+		"user_id":  request.UserID,
+		"duration": duration.String(),
 	})
 }

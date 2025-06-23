@@ -374,7 +374,7 @@
             background: #fafbfc;
             border-radius: 12px;
             border: 1px solid #ececec;
-            max-height: 400px;
+            max-height: 600px;
         }
         .chat-message {
             margin-bottom: 16px;
@@ -509,6 +509,279 @@
             from { opacity: 0; transform: translateY(-10px); }
             to { opacity: 1; transform: translateY(0); }
         }
+        .mode-switcher {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+            justify-content: center;
+        }
+        .mode-btn {
+            background: #f3f4f6;
+            color: #6b7280;
+            border: 1px solid #d1d5db;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 0.9em;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .mode-btn:hover {
+            background: #e5e7eb;
+            color: #374151;
+        }
+        .mode-btn.active {
+            background: #2563eb;
+            color: white;
+            border-color: #2563eb;
+        }
+        .mode-btn.active:hover {
+            background: #1749b1;
+        }
+        
+        /* 计划步骤样式 */
+        .plan-goal {
+            background: #f0f6ff;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            border: 1px solid #dbeafe;
+            font-size: 0.95em;
+            line-height: 1.5;
+        }
+        
+        .plan-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .plan-step {
+            width: 100%;
+        }
+        
+        .step-button {
+            width: 100%;
+            background: white;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 16px;
+            text-align: left;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-family: inherit;
+        }
+        
+        .step-button:hover {
+            border-color: #2563eb;
+            background: #f8fafc;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.1);
+        }
+        
+        .step-button:active {
+            transform: translateY(0);
+        }
+        
+        .step-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        
+        .step-number {
+            background: #2563eb;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 0.85em;
+            font-weight: 600;
+            min-width: 60px;
+            text-align: center;
+        }
+        
+        .step-title {
+            font-weight: 600;
+            color: #111;
+            font-size: 1.05em;
+        }
+        
+        .step-content {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .step-description, .step-outcome {
+            font-size: 0.9em;
+            line-height: 1.5;
+            color: #374151;
+        }
+        
+        .step-description strong, .step-outcome strong {
+            color: #111;
+        }
+        
+        /* 全部执行按钮样式 */
+        .execute-all-btn {
+            background: #10b981;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 500;
+            cursor: pointer;
+            margin-bottom: 16px;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .execute-all-btn:hover {
+            background: #059669;
+        }
+        
+        .execute-all-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        /* 编辑按钮样式 */
+        .edit-btn {
+            background: #f59e0b;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.85em;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin-left: 8px;
+        }
+        
+        .edit-btn:hover {
+            background: #d97706;
+        }
+        
+        /* 编辑模态框样式 */
+        .edit-modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+        
+        .edit-modal-content {
+            background-color: white;
+            margin: 5% auto;
+            padding: 24px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+        }
+        
+        .edit-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .edit-modal-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #111;
+        }
+        
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 1.5em;
+            cursor: pointer;
+            color: #666;
+        }
+        
+        .close-btn:hover {
+            color: #111;
+        }
+        
+        .edit-form-group {
+            margin-bottom: 16px;
+        }
+        
+        .edit-form-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 500;
+            color: #222;
+        }
+        
+        .edit-form-group input,
+        .edit-form-group textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 0.95em;
+            box-sizing: border-box;
+        }
+        
+        .edit-form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+        
+        .edit-form-group input:focus,
+        .edit-form-group textarea:focus {
+            outline: none;
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+        
+        .edit-modal-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+        
+        .save-btn {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 0.95em;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .save-btn:hover {
+            background: #1749b1;
+        }
+        
+        .cancel-btn {
+            background: #6b7280;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 0.95em;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .cancel-btn:hover {
+            background: #4b5563;
+        }
     </style>
 </head>
 <body>
@@ -575,11 +848,15 @@
                 <div class="chat-header">
                     <h2>知识库对话</h2>
                     <p>基于您上传的文档进行智能问答</p>
+                    <div class="mode-switcher">
+                        <button class="mode-btn active" id="chatModeBtn" onclick="switchMode('chat')">问答模式</button>
+                        <button class="mode-btn" id="planModeBtn" onclick="switchMode('plan')">计划模式</button>
+                    </div>
                 </div>
                 <div class="chat-messages" id="chatMessages">
                     <div class="chat-placeholder">
                         欢迎使用知识库对话系统！<br>
-                        请在上传文件后开始提问。
+                        请在上传文件后开始提问或制定计划。
                     </div>
                 </div>
                 <div class="typing-indicator" id="typingIndicator">
@@ -601,6 +878,35 @@
             </div>
         </div>
     </div>
+    
+    <!-- 编辑模态框 -->
+    <div id="editModal" class="edit-modal">
+        <div class="edit-modal-content">
+            <div class="edit-modal-header">
+                <h3 class="edit-modal-title">编辑步骤</h3>
+                <button class="close-btn" onclick="closeEditModal()">&times;</button>
+            </div>
+            <form id="editForm">
+                <div class="edit-form-group">
+                    <label for="editTitle">步骤标题</label>
+                    <input type="text" id="editTitle" required>
+                </div>
+                <div class="edit-form-group">
+                    <label for="editDescription">具体操作描述</label>
+                    <textarea id="editDescription" required></textarea>
+                </div>
+                <div class="edit-form-group">
+                    <label for="editExpectedOutcome">可衡量的成果</label>
+                    <textarea id="editExpectedOutcome" required></textarea>
+                </div>
+                <div class="edit-modal-actions">
+                    <button type="button" class="cancel-btn" onclick="closeEditModal()">取消</button>
+                    <button type="submit" class="save-btn">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
     <script>
         // 白名单用户列表
         const whitelist = ['ly', 'wf'];
@@ -608,6 +914,9 @@
         let chatHistory = [];
         let documentStatus = {}; // 存储文档处理状态
         let statusCheckInterval = null; // 状态查询定时器
+        let currentMode = 'chat'; // 当前模式：chat 或 plan
+        let currentPlanData = null; // 存储当前计划数据
+        let editingStepIndex = -1; // 当前编辑的步骤索引
 
         // 身份验证相关元素
         const authPage = document.getElementById('authPage');
@@ -670,7 +979,7 @@
             showAuthMessage('已退出登录', 'success');
             // 清理聊天记录
             chatHistory = [];
-            chatMessages.innerHTML = '<div class="chat-placeholder">欢迎使用知识库对话系统！<br>请在上传文件后开始提问。</div>';
+            chatMessages.innerHTML = '<div class="chat-placeholder">欢迎使用知识库对话系统！<br>请在上传文件后开始提问或制定计划。</div>';
             // 停止状态查询定时器
             stopStatusCheck();
             // 清空文档状态
@@ -1015,20 +1324,301 @@
             typingIndicator.style.display = 'none';
         }
 
+        // 模式切换函数
+        function switchMode(mode) {
+            currentMode = mode;
+            
+            // 更新按钮状态
+            document.getElementById('chatModeBtn').classList.toggle('active', mode === 'chat');
+            document.getElementById('planModeBtn').classList.toggle('active', mode === 'plan');
+            
+            // 更新输入框占位符
+            const chatInput = document.getElementById('chatInput');
+            if (mode === 'chat') {
+                chatInput.placeholder = '请输入您的问题...';
+            } else {
+                chatInput.placeholder = '请描述您的目标或需求，我将为您制定执行计划...';
+            }
+            
+            // 添加模式切换提示
+            const modeText = mode === 'chat' ? '问答模式' : '计划模式';
+            addSystemMessage(`已切换到${modeText}`);
+        }
+
+        // 发送消息
         async function sendMessage() {
             const message = chatInput.value.trim();
             if (!message) return;
 
-            // 添加用户消息
-            addUserMessage(message);
+            // 清空输入框
             chatInput.value = '';
+            chatInput.style.height = 'auto';
+
+            // 添加用户消息到聊天界面
+            addUserMessage(message);
             
-            // 默认使用流式响应
-            await sendStreamMessage(message);
+            // 根据当前模式选择API端点
+            if (currentMode === 'chat') {
+                await sendStreamMessage(message, '/api/chat/stream');
+            } else {
+                await sendPlanMessage(message, '/api/plan/stream');
+            }
+        }
+
+        // 非流式计划消息发送
+        async function sendPlanMessage(message, endpoint) {
+            // 显示打字指示器
+            showTypingIndicator();
+
+            try {
+                // 构建聊天历史
+                const messages = chatHistory.map(msg => ({
+                    role: msg.role,
+                    content: msg.content
+                }));
+                
+                // 添加当前用户消息
+                messages.push({
+                    role: 'user',
+                    content: message
+                });
+
+                // 创建助手消息元素
+                const assistantMessageDiv = document.createElement('div');
+                assistantMessageDiv.className = 'chat-message assistant';
+                assistantMessageDiv.textContent = '🔄 正在生成执行计划...';
+                chatMessages.appendChild(assistantMessageDiv);
+                
+                hideTypingIndicator();
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                // 使用 fetch 发送非流式请求
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        user_id: currentUser,
+                        query: message,
+                        messages: messages
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                if (data.error) {
+                    assistantMessageDiv.textContent = `抱歉，发生了错误：${data.error}`;
+                    return;
+                }
+
+                // 尝试解析计划数据为JSON格式
+                try {
+                    const planData = JSON.parse(data.plan);
+                    displayPlanWithSteps(assistantMessageDiv, planData);
+                } catch (parseError) {
+                    // 如果解析失败，显示原始文本
+                    assistantMessageDiv.textContent = data.plan;
+                }
+                
+                // 更新聊天历史
+                chatHistory.push({ role: 'user', content: message });
+                chatHistory.push({ role: 'assistant', content: data.plan });
+                
+                // 保持聊天历史在合理范围内（最近10轮对话）
+                if (chatHistory.length > 20) {
+                    chatHistory = chatHistory.slice(-20);
+                }
+
+            } catch (error) {
+                hideTypingIndicator();
+                addAssistantMessage(`抱歉，网络错误：${error.message}`);
+            }
+        }
+
+        // 显示计划步骤
+        function displayPlanWithSteps(container, planData) {
+            container.innerHTML = '';
+            currentPlanData = planData; // 保存计划数据
+            
+            // 显示目标分析
+            if (planData.goal_analysis) {
+                const goalDiv = document.createElement('div');
+                goalDiv.className = 'plan-goal';
+                goalDiv.innerHTML = `<strong>🎯 目标分析：</strong>${planData.goal_analysis}`;
+                container.appendChild(goalDiv);
+            }
+            
+            // 添加全部执行按钮
+            if (planData.steps && planData.steps.length > 0) {
+                const executeAllBtn = document.createElement('button');
+                executeAllBtn.className = 'execute-all-btn';
+                executeAllBtn.innerHTML = '🚀 全部执行';
+                executeAllBtn.onclick = () => executeAllSteps(planData.steps);
+                container.appendChild(executeAllBtn);
+            }
+            
+            // 显示步骤
+            if (planData.steps && Array.isArray(planData.steps)) {
+                const stepsDiv = document.createElement('div');
+                stepsDiv.className = 'plan-steps';
+                
+                planData.steps.forEach((step, index) => {
+                    const stepDiv = document.createElement('div');
+                    stepDiv.className = 'plan-step';
+                    
+                    const stepButton = document.createElement('button');
+                    stepButton.className = 'step-button';
+                    stepButton.innerHTML = `
+                        <div class="step-header">
+                            <span class="step-number">步骤 ${step.step_number}</span>
+                            <span class="step-title">${step.title}</span>
+                            <button class="edit-btn" onclick="editStep(${index}, event)">✏️ 编辑</button>
+                        </div>
+                        <div class="step-content">
+                            <div class="step-description"><strong>描述：</strong>${step.description}</div>
+                            <div class="step-outcome"><strong>预期成果：</strong>${step.expected_outcome}</div>
+                        </div>
+                    `;
+                    
+                    // 添加点击事件
+                    stepButton.addEventListener('click', (e) => {
+                        // 如果点击的是编辑按钮，不触发步骤执行
+                        if (e.target.classList.contains('edit-btn')) {
+                            return;
+                        }
+                        handleStepClick(step);
+                    });
+                    
+                    stepDiv.appendChild(stepButton);
+                    stepsDiv.appendChild(stepDiv);
+                });
+                
+                container.appendChild(stepsDiv);
+            }
+        }
+
+        // 处理步骤点击
+        async function handleStepClick(step) {
+            try {
+                const response = await fetch('/api/plan/step', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        user_id: currentUser,
+                        step_number: step.step_number,
+                        title: step.title,
+                        description: step.description,
+                        expected_outcome: step.expected_outcome
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                if (data.error) {
+                    console.error('Step click error:', data.error);
+                    return;
+                }
+
+                // 显示点击确认消息
+                addSystemMessage(`✅ 已点击步骤 ${step.step_number}: ${step.title}`);
+                
+            } catch (error) {
+                console.error('Failed to handle step click:', error);
+                addSystemMessage(`❌ 步骤点击失败: ${error.message}`);
+            }
+        }
+
+        // 全部执行步骤
+        async function executeAllSteps(steps) {
+            addSystemMessage(`🚀 开始执行全部 ${steps.length} 个步骤...`);
+            
+            for (let i = 0; i < steps.length; i++) {
+                const step = steps[i];
+                addSystemMessage(`⏳ 正在执行步骤 ${i + 1}/${steps.length}: ${step.title}`);
+                
+                try {
+                    await handleStepClick(step);
+                    // 添加延迟，避免请求过于频繁
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                } catch (error) {
+                    addSystemMessage(`❌ 步骤 ${i + 1} 执行失败: ${error.message}`);
+                }
+            }
+            
+            addSystemMessage(`✅ 全部步骤执行完成！`);
+        }
+
+        // 编辑步骤
+        function editStep(stepIndex, event) {
+            event.stopPropagation(); // 阻止事件冒泡
+            
+            if (!currentPlanData || !currentPlanData.steps || !currentPlanData.steps[stepIndex]) {
+                console.error('Invalid step index or plan data');
+                return;
+            }
+            
+            editingStepIndex = stepIndex;
+            const step = currentPlanData.steps[stepIndex];
+            
+            // 填充表单
+            document.getElementById('editTitle').value = step.title;
+            document.getElementById('editDescription').value = step.description;
+            document.getElementById('editExpectedOutcome').value = step.expected_outcome;
+            
+            // 显示模态框
+            document.getElementById('editModal').style.display = 'block';
+        }
+
+        // 关闭编辑模态框
+        function closeEditModal() {
+            document.getElementById('editModal').style.display = 'none';
+            editingStepIndex = -1;
+        }
+
+        // 保存编辑
+        function saveEdit() {
+            if (editingStepIndex === -1 || !currentPlanData) {
+                return;
+            }
+            
+            const title = document.getElementById('editTitle').value.trim();
+            const description = document.getElementById('editDescription').value.trim();
+            const expectedOutcome = document.getElementById('editExpectedOutcome').value.trim();
+            
+            if (!title || !description || !expectedOutcome) {
+                alert('请填写所有必填字段');
+                return;
+            }
+            
+            // 更新计划数据
+            currentPlanData.steps[editingStepIndex].title = title;
+            currentPlanData.steps[editingStepIndex].description = description;
+            currentPlanData.steps[editingStepIndex].expected_outcome = expectedOutcome;
+            
+            // 重新渲染计划显示
+            const assistantMessages = document.querySelectorAll('.chat-message.assistant');
+            const lastAssistantMessage = assistantMessages[assistantMessages.length - 1];
+            if (lastAssistantMessage) {
+                displayPlanWithSteps(lastAssistantMessage, currentPlanData);
+            }
+            
+            closeEditModal();
+            addSystemMessage(`✅ 步骤 ${editingStepIndex + 1} 编辑成功`);
         }
 
         // 流式消息发送
-        async function sendStreamMessage(message) {
+        async function sendStreamMessage(message, endpoint) {
             // 显示打字指示器
             showTypingIndicator();
 
@@ -1055,7 +1645,7 @@
                 chatMessages.scrollTop = chatMessages.scrollHeight;
 
                 // 使用 fetch 发送流式请求
-                const response = await fetch('/api/chat/stream', {
+                const response = await fetch(endpoint, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1188,6 +1778,19 @@
             // 默认显示身份验证页面
             authPage.classList.remove('hidden');
             mainApp.style.display = 'none';
+            
+            // 编辑表单提交事件
+            document.getElementById('editForm').addEventListener('submit', (e) => {
+                e.preventDefault();
+                saveEdit();
+            });
+            
+            // 模态框点击外部关闭
+            document.getElementById('editModal').addEventListener('click', (e) => {
+                if (e.target.id === 'editModal') {
+                    closeEditModal();
+                }
+            });
         });
     </script>
 </body>
