@@ -16,7 +16,7 @@ import (
 	"tos_tool"
 	"viking_db_tool"
 
-	"file-upload-server/react_agent"
+	"react_agent"
 
 	"github.com/cloudwego/eino/schema"
 	"github.com/cloudwego/hertz/pkg/app"
@@ -225,7 +225,7 @@ func main() {
 	}
 	log.Printf("INFO: Upload directory created/verified: %s", uploadDir)
 
-	h := server.Default(server.WithHostPorts("127.0.0.1:8888"), server.WithStreamBody(true), server.WithTransport(standard.NewTransporter))
+	h := server.Default(server.WithHostPorts("0.0.0.0:8888"), server.WithStreamBody(true), server.WithTransport(standard.NewTransporter))
 
 	// 配置CORS
 	h.Use(cors.New(cors.Config{
