@@ -782,6 +782,37 @@
         .cancel-btn:hover {
             background: #4b5563;
         }
+
+        /* 执行结果样式 */
+        .execution-result {
+            border-left: 4px solid #10b981;
+            background: #f0fdf4;
+            margin: 12px 0;
+        }
+
+        .execution-result-title {
+            color: #10b981;
+            font-weight: 600;
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #d1fae5;
+        }
+
+        .execution-result-content {
+            color: #374151;
+            line-height: 1.6;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        }
+
+        .execution-result-content pre {
+            background: #f9fafb;
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #e5e7eb;
+            overflow-x: auto;
+            font-size: 0.9em;
+            margin: 0;
+        }
     </style>
 </head>
 <body>
@@ -914,9 +945,11 @@
         let chatHistory = [];
         let documentStatus = {}; // 存储文档处理状态
         let statusCheckInterval = null; // 状态查询定时器
-        let currentMode = 'chat'; // 当前模式：chat 或 plan
-        let currentPlanData = null; // 存储当前计划数据
-        let editingStepIndex = -1; // 当前编辑的步骤索引
+        let currentMode = 'chat'; // 'chat' 或 'plan'
+        let currentPlanData = null; // 保存当前计划数据
+        let currentSessionId = null; // 保存当前会话ID
+        let editingStepIndex = -1; // 正在编辑的步骤索引
+        let processingMessages = new Map(); // 存储文件处理消息元素，key为文件名，value为消息元素
 
         // 身份验证相关元素
         const authPage = document.getElementById('authPage');
@@ -984,6 +1017,8 @@
             stopStatusCheck();
             // 清空文档状态
             documentStatus = {};
+            // 清空处理消息跟踪
+            processingMessages.clear();
         }
 
         // 显示身份验证消息
@@ -1050,8 +1085,9 @@
                     loadFileList();
                     // 开始查询文档处理状态
                     startStatusCheck();
-                    // 添加系统消息提示文件已上传
-                    addSystemMessage(`文件 "${file.name}" 已上传到知识库，正在处理中...`);
+                    // 添加系统消息提示文件已上传，并保存消息元素引用
+                    const processingMessage = addSystemMessage(`文件 "${file.name}" 已上传到知识库，正在处理中...`);
+                    processingMessages.set(file.name, processingMessage);
                 } else {
                     showMessage(`上传失败: ${result.error}`, 'error');
                 }
@@ -1160,6 +1196,7 @@
                 if (response.ok) {
                     // 将DocumentStatusInfo数组转换为以docID为键的对象
                     const statusArray = result.document_status || [];
+                    const previousStatus = { ...documentStatus };
                     documentStatus = {};
                     statusArray.forEach(statusInfo => {
                         documentStatus[statusInfo.doc_id] = {
@@ -1168,6 +1205,9 @@
                             isCompleted: statusInfo.is_completed
                         };
                     });
+                    
+                    // 检查状态变化并更新聊天消息
+                    updateProcessingMessages(previousStatus);
                     
                     // 更新文件列表显示
                     updateFileListWithStatus();
@@ -1186,6 +1226,55 @@
                 }
             } catch (error) {
                 console.error('Failed to check document status:', error);
+            }
+        }
+
+        // 更新处理中的消息状态
+        function updateProcessingMessages(previousStatus) {
+            // 遍历所有正在跟踪的处理消息
+            for (const [fileName, messageElement] of processingMessages.entries()) {
+                const docID = getDocID(fileName);
+                const currentStatus = documentStatus[docID];
+                const prevStatus = previousStatus[docID];
+                
+                // 检查状态是否发生变化
+                if (currentStatus && prevStatus && currentStatus.processStatus !== prevStatus.processStatus) {
+                    // 状态发生变化，更新消息
+                    if (currentStatus.processStatus === 0) {
+                        // 处理完成
+                        messageElement.textContent = `文件 "${fileName}" 已成功处理并添加到知识库 ✅`;
+                        messageElement.className = 'chat-message system';
+                        // 从跟踪列表中移除
+                        processingMessages.delete(fileName);
+                    } else if (currentStatus.processStatus === 1) {
+                        // 处理失败
+                        messageElement.textContent = `文件 "${fileName}" 处理失败 ❌`;
+                        messageElement.className = 'chat-message system';
+                        // 从跟踪列表中移除
+                        processingMessages.delete(fileName);
+                    } else {
+                        // 其他状态，更新处理中的消息
+                        messageElement.textContent = `文件 "${fileName}" 正在处理中... (${currentStatus.statusText})`;
+                    }
+                } else if (currentStatus && !prevStatus) {
+                    // 新状态，首次获取到状态信息
+                    if (currentStatus.processStatus === 0) {
+                        // 已经处理完成
+                        messageElement.textContent = `文件 "${fileName}" 已成功处理并添加到知识库 ✅`;
+                        messageElement.className = 'chat-message system';
+                        // 从跟踪列表中移除
+                        processingMessages.delete(fileName);
+                    } else if (currentStatus.processStatus === 1) {
+                        // 处理失败
+                        messageElement.textContent = `文件 "${fileName}" 处理失败 ❌`;
+                        messageElement.className = 'chat-message system';
+                        // 从跟踪列表中移除
+                        processingMessages.delete(fileName);
+                    } else {
+                        // 正在处理中，更新状态文本
+                        messageElement.textContent = `文件 "${fileName}" 正在处理中... (${currentStatus.statusText})`;
+                    }
+                }
             }
         }
 
@@ -1303,8 +1392,13 @@
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
-        function addSystemMessage(content) {
-            addMessage(content, 'system');
+        function addSystemMessage(message) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'chat-message system';
+            messageDiv.textContent = message;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            return messageDiv; // 返回创建的元素
         }
 
         function addUserMessage(content) {
@@ -1416,6 +1510,12 @@
                     return;
                 }
 
+                // 保存会话ID
+                if (data.session_id) {
+                    currentSessionId = data.session_id;
+                    console.log('Plan session created:', currentSessionId);
+                }
+
                 // 尝试解析计划数据为JSON格式
                 try {
                     const planData = JSON.parse(data.plan);
@@ -1504,6 +1604,15 @@
 
         // 处理步骤点击
         async function handleStepClick(step) {
+            // 检查是否有会话ID
+            if (!currentSessionId) {
+                addSystemMessage(`❌ 会话ID丢失，请重新生成执行计划`);
+                return;
+            }
+
+            // 显示执行开始消息
+            const executingMessage = addSystemMessage(`⏳ 正在执行步骤 ${step.step_number}: ${step.title}...`);
+            
             try {
                 const response = await fetch('/api/plan/step', {
                     method: 'POST',
@@ -1512,6 +1621,7 @@
                     },
                     body: JSON.stringify({
                         user_id: currentUser,
+                        session_id: currentSessionId,
                         step_number: step.step_number,
                         title: step.title,
                         description: step.description,
@@ -1525,17 +1635,65 @@
 
                 const data = await response.json();
                 
+                // 添加调试信息
+                console.log('Step execution response:', data);
+                
                 if (data.error) {
                     console.error('Step click error:', data.error);
+                    addSystemMessage(`❌ 步骤 ${step.step_number} 执行失败: ${data.error}`);
                     return;
                 }
 
-                // 显示点击确认消息
-                addSystemMessage(`✅ 已点击步骤 ${step.step_number}: ${step.title}`);
+                // 移除执行中的消息
+                if (executingMessage && executingMessage.parentNode) {
+                    executingMessage.parentNode.removeChild(executingMessage);
+                }
+
+                // 显示执行成功消息
+                addSystemMessage(`✅ 步骤 ${step.step_number} 执行完成: ${step.title}`);
+                
+                // 显示执行结果
+                console.log('Checking execution_result:', data.execution_result);
+                if (data.execution_result) {
+                    console.log('Creating execution result display...');
+                    const resultDiv = document.createElement('div');
+                    resultDiv.className = 'chat-message assistant execution-result';
+                    
+                    // 添加结果标题
+                    const titleDiv = document.createElement('div');
+                    titleDiv.className = 'execution-result-title';
+                    titleDiv.innerHTML = `<strong>🔧 步骤 ${step.step_number} 执行结果：</strong>`;
+                    resultDiv.appendChild(titleDiv);
+                    
+                    // 添加结果内容
+                    const contentDiv = document.createElement('div');
+                    contentDiv.className = 'execution-result-content';
+                    
+                    // 如果结果是JSON格式，尝试格式化显示
+                    try {
+                        const jsonResult = JSON.parse(data.execution_result);
+                        contentDiv.innerHTML = `<pre>${JSON.stringify(jsonResult, null, 2)}</pre>`;
+                    } catch (e) {
+                        // 如果不是JSON，直接显示文本内容，保持换行格式
+                        contentDiv.innerHTML = data.execution_result.replace(/\n/g, '<br>');
+                    }
+                    
+                    resultDiv.appendChild(contentDiv);
+                    chatMessages.appendChild(resultDiv);
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                    console.log('Execution result display added to chat');
+                } else {
+                    console.log('No execution_result in response data');
+                }
                 
             } catch (error) {
+                // 移除执行中的消息
+                if (executingMessage && executingMessage.parentNode) {
+                    executingMessage.parentNode.removeChild(executingMessage);
+                }
+                
                 console.error('Failed to handle step click:', error);
-                addSystemMessage(`❌ 步骤点击失败: ${error.message}`);
+                addSystemMessage(`❌ 步骤 ${step.step_number} 执行失败: ${error.message}`);
             }
         }
 

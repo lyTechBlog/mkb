@@ -1,0 +1,62 @@
+{
+  "models": {
+      "gpt-4o": {
+          "model_name": "gpt-4o",
+          "url": "https://api3.wlai.vip/v1",
+          "api_key": "sk-vHBoaQHPe1s34AU69ZaM62BzFVIPwDeQnjLzSsLG1VjnNR4z",
+          "prices": {
+              "input": 7.5,
+              "output": 22.5
+          }
+      },
+      "gemini-2.0-flash-exp": {
+          "model_name": "gemini-2.0-flash-exp",
+          "url": "https://api3.wlai.vip/v1",
+          "api_key": "sk-KAMRBuveJUVLPkfsai8rn7sf5AMspmsezcEFeoUs0AlXvb2p",
+          "prices": {
+              "input": 3,
+              "output": 12 
+          }
+      },
+      "deepseek-chat": {
+          "model_name": "deepseek-chat",
+          "url": "https://api.deepseek.com/v1",
+          "api_key": "sk-7b37cc986e4e480b906e5f38c59bafae",
+          "prices": {
+              "input": 1,
+              "output": 2
+          }
+      },
+      "qwen-vl-plus-latest": {
+          "model_name": "qwen-vl-plus-latest",
+          "url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "api_key": "sk-cf6c4e4b5734472815d968a1374ff00",
+          "prices": {
+              "input": 0.8,
+              "output": 2
+          }
+      },
+      "Doubao-pro-4k": {
+          "model_name": "doubao-1.5-thinking-vision-pro-250428",
+          "url": "https://ark.cn-beijing.volces.com/api/v3",
+          "api_key": "3dbd4438-c044-46fa-ae06-de2f1da4ecd8",
+          "prices": {
+              "input": 3,
+              "output": 9 
+          }
+      }
+  },
+  "embedding_model": {
+      "model_name": "text-embedding-3-small",
+      "url": "https://api3.wlai.vip/v1",
+      "api_key": "sk-KAMRBuveJUVLPkfsai8rn7sf5AMspmsezcEFeoUs0AlXvb2p"
+  },
+  "mcp_servers": {
+      "gaode": {
+          "name": "gaode-mcp",
+          "host": "https://mcp.amap.com/sse?key=4b6ea160a82a5d3ee7a46f7abb27e155",
+          "api_key": "4b6ea160a82a5d3ee7a46f7abb27e155",
+          "type": "sse"
+      }
+  }
+}

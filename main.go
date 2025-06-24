@@ -9,11 +9,16 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"tos_tool"
 	"viking_db_tool"
 
+	"file-upload-server/react_agent"
+
+	"github.com/cloudwego/eino/schema"
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/utils"
@@ -74,6 +79,142 @@ func getDocTypeByExtension(filename string) string {
 	return "txt"
 }
 
+// 会话状态管理
+type StepResult struct {
+	StepNumber      int       `json:"step_number"`
+	Title           string    `json:"title"`
+	Description     string    `json:"description"`
+	ExpectedOutcome string    `json:"expected_outcome"`
+	ExecutionResult string    `json:"execution_result"`
+	ExecutedAt      time.Time `json:"executed_at"`
+	Status          string    `json:"status"` // "success", "failed", "pending"
+}
+
+type PlanSession struct {
+	UserID        string                 `json:"user_id"`
+	SessionID     string                 `json:"session_id"`
+	OriginalQuery string                 `json:"original_query"`
+	PlanData      map[string]interface{} `json:"plan_data"`
+	StepResults   []StepResult           `json:"step_results"`
+	CreatedAt     time.Time              `json:"created_at"`
+	UpdatedAt     time.Time              `json:"updated_at"`
+	mutex         sync.RWMutex           `json:"-"`
+}
+
+// 全局会话存储
+var (
+	planSessions = make(map[string]*PlanSession)
+	sessionMutex sync.RWMutex
+)
+
+// 创建新的计划会话
+func createPlanSession(userID, query string, planData map[string]interface{}) *PlanSession {
+	sessionID := fmt.Sprintf("%s_%d", userID, time.Now().Unix())
+
+	session := &PlanSession{
+		UserID:        userID,
+		SessionID:     sessionID,
+		OriginalQuery: query,
+		PlanData:      planData,
+		StepResults:   make([]StepResult, 0),
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+
+	sessionMutex.Lock()
+	planSessions[sessionID] = session
+	sessionMutex.Unlock()
+
+	log.Printf("INFO: [SESSION] Created new plan session: %s for user: %s", sessionID, userID)
+	return session
+}
+
+// 获取计划会话
+func getPlanSession(sessionID string) (*PlanSession, bool) {
+	sessionMutex.RLock()
+	session, exists := planSessions[sessionID]
+	sessionMutex.RUnlock()
+	return session, exists
+}
+
+// 添加步骤执行结果
+func (ps *PlanSession) AddStepResult(result StepResult) {
+	ps.mutex.Lock()
+	defer ps.mutex.Unlock()
+
+	// 查找是否已存在该步骤的结果，如果存在则更新，否则添加
+	found := false
+	for i, existing := range ps.StepResults {
+		if existing.StepNumber == result.StepNumber {
+			ps.StepResults[i] = result
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		ps.StepResults = append(ps.StepResults, result)
+	}
+
+	ps.UpdatedAt = time.Now()
+	log.Printf("INFO: [SESSION] Added step result for session %s, step %d", ps.SessionID, result.StepNumber)
+}
+
+// 获取前面步骤的执行结果
+func (ps *PlanSession) GetPreviousStepResults(currentStepNumber int) []StepResult {
+	ps.mutex.RLock()
+	defer ps.mutex.RUnlock()
+
+	var previousResults []StepResult
+	for _, result := range ps.StepResults {
+		if result.StepNumber < currentStepNumber && result.Status == "success" {
+			previousResults = append(previousResults, result)
+		}
+	}
+
+	return previousResults
+}
+
+// 构建包含前面步骤结果的上下文
+func (ps *PlanSession) BuildContextWithPreviousResults(currentStepNumber int) string {
+	previousResults := ps.GetPreviousStepResults(currentStepNumber)
+
+	if len(previousResults) == 0 {
+		return ""
+	}
+
+	var contextBuilder strings.Builder
+	contextBuilder.WriteString("\n\n# 当前计划的前置步骤执行结果\n")
+	contextBuilder.WriteString("以下是当前执行计划中前面已完成步骤的执行结果，你可以参考这些信息来执行当前步骤：\n\n")
+
+	for _, result := range previousResults {
+		contextBuilder.WriteString(fmt.Sprintf("## 步骤 %d: %s\n", result.StepNumber, result.Title))
+		contextBuilder.WriteString(fmt.Sprintf("**步骤描述**: %s\n", result.Description))
+		contextBuilder.WriteString(fmt.Sprintf("**期望成果**: %s\n", result.ExpectedOutcome))
+		contextBuilder.WriteString(fmt.Sprintf("**执行时间**: %s\n", result.ExecutedAt.Format("2006-01-02 15:04:05")))
+		contextBuilder.WriteString(fmt.Sprintf("**实际执行结果**:\n%s\n\n", result.ExecutionResult))
+		contextBuilder.WriteString("---\n\n")
+	}
+
+	contextBuilder.WriteString("请基于以上前置步骤的执行结果来完成当前步骤。如果前面的步骤结果包含了你需要的信息（如数据、文件路径、API响应等），请直接使用这些信息，避免重复执行相同的操作。\n")
+
+	return contextBuilder.String()
+}
+
+// 清理过期会话（可选，用于内存管理）
+func cleanupExpiredSessions() {
+	sessionMutex.Lock()
+	defer sessionMutex.Unlock()
+
+	expireTime := time.Now().Add(-24 * time.Hour) // 24小时过期
+	for sessionID, session := range planSessions {
+		if session.UpdatedAt.Before(expireTime) {
+			delete(planSessions, sessionID)
+			log.Printf("INFO: [SESSION] Cleaned up expired session: %s", sessionID)
+		}
+	}
+}
+
 func main() {
 	log.Printf("INFO: Starting MKB server...")
 
@@ -117,6 +258,8 @@ func main() {
 		api.POST("/chat/stream", chatWithKnowledgeBaseStream)
 		api.POST("/plan/stream", planWithKnowledgeBaseStream)
 		api.POST("/plan/step", handlePlanStep)
+		api.GET("/plan/session/:session_id", getPlanSessionStatus)
+		api.GET("/plan/session/:session_id/context/:step_number", getPlanStepContext)
 		api.GET("/documents/status", getDocumentStatus)
 	}
 	log.Printf("INFO: API routes configured")
@@ -143,6 +286,20 @@ func main() {
 	})
 
 	log.Printf("INFO: Server starting on http://0.0.0.0:8888 (accessible from external IPs)")
+
+	// 启动定期清理过期会话的goroutine
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour) // 每小时清理一次
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				cleanupExpiredSessions()
+			}
+		}
+	}()
+
 	h.Spin()
 }
 
@@ -752,27 +909,27 @@ func chatWithKnowledgeBaseStream(ctx context.Context, c *app.RequestContext) {
 
 // 查询文档处理状态
 func getDocumentStatus(ctx context.Context, c *app.RequestContext) {
-	log.Printf("INFO: [DOC_STATUS] Starting document status request: %s %s", c.Method(), c.Request.URI().String())
-	startTime := time.Now()
+	//log.Printf("INFO: [DOC_STATUS] Starting document status request: %s %s", c.Method(), c.Request.URI().String())
+	//startTime := time.Now()
 
 	// 获取用户ID参数
 	userID := c.Query("user_id")
 	if userID == "" {
-		log.Printf("ERROR: [DOC_STATUS] User ID is missing")
+		//log.Printf("ERROR: [DOC_STATUS] User ID is missing")
 		c.JSON(consts.StatusBadRequest, utils.H{
 			"error": "User ID is required",
 		})
 		return
 	}
-	log.Printf("INFO: [DOC_STATUS] Getting document status for user ID: %s", userID)
+	//log.Printf("INFO: [DOC_STATUS] Getting document status for user ID: %s", userID)
 
 	// 检查知识库是否存在
 	knowledgeBaseName := "kb_" + userID
 	project := "default"
-	log.Printf("INFO: [DOC_STATUS] Checking knowledge base existence: %s in project: %s", knowledgeBaseName, project)
+	//log.Printf("INFO: [DOC_STATUS] Checking knowledge base existence: %s in project: %s", knowledgeBaseName, project)
 	exists, resourceID, err := viking_db_tool.CheckKnowledgeBaseExists(ctx, knowledgeBaseName, project)
 	if err != nil {
-		log.Printf("ERROR: [DOC_STATUS] Failed to check knowledge base existence: %v", err)
+		//log.Printf("ERROR: [DOC_STATUS] Failed to check knowledge base existence: %v", err)
 		c.JSON(consts.StatusInternalServerError, utils.H{
 			"error": "Failed to check knowledge base existence: " + err.Error(),
 		})
@@ -780,7 +937,7 @@ func getDocumentStatus(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if !exists {
-		log.Printf("ERROR: [DOC_STATUS] Knowledge base not found for user: %s", userID)
+		//log.Printf("ERROR: [DOC_STATUS] Knowledge base not found for user: %s", userID)
 		c.JSON(consts.StatusNotFound, utils.H{
 			"error": "Knowledge base not found",
 		})
@@ -788,18 +945,18 @@ func getDocumentStatus(ctx context.Context, c *app.RequestContext) {
 	}
 
 	// 获取文档处理状态
-	log.Printf("INFO: [DOC_STATUS] Getting document processing status for resource ID: %s", resourceID)
+	//log.Printf("INFO: [DOC_STATUS] Getting document processing status for resource ID: %s", resourceID)
 	docStatus, err := viking_db_tool.GetDocumentProcessingStatus(ctx, resourceID)
 	if err != nil {
-		log.Printf("ERROR: [DOC_STATUS] Failed to get document status: %v", err)
+		//log.Printf("ERROR: [DOC_STATUS] Failed to get document status: %v", err)
 		c.JSON(consts.StatusInternalServerError, utils.H{
 			"error": "Failed to get document status: " + err.Error(),
 		})
 		return
 	}
 
-	duration := time.Since(startTime)
-	log.Printf("INFO: [DOC_STATUS] Document status request completed in %v for user %s", duration, userID)
+	//duration := time.Since(startTime)
+	//log.Printf("INFO: [DOC_STATUS] Document status request completed in %v for user %s", duration, userID)
 	c.JSON(consts.StatusOK, utils.H{
 		"document_status": docStatus,
 		"user_id":         userID,
@@ -993,11 +1150,24 @@ func planWithKnowledgeBaseStream(ctx context.Context, c *app.RequestContext) {
 	duration := time.Since(startTime)
 	log.Printf("INFO: [PLAN] Plan request completed in %v for user %s", duration, request.UserID)
 
+	// 解析计划数据并创建会话
+	var planData map[string]interface{}
+	if err := json.Unmarshal([]byte(response.Data.GenerateAnswer), &planData); err != nil {
+		log.Printf("WARN: [PLAN] Failed to parse plan data as JSON, treating as plain text: %v", err)
+		planData = map[string]interface{}{
+			"raw_plan": response.Data.GenerateAnswer,
+		}
+	}
+
+	// 创建计划会话
+	session := createPlanSession(request.UserID, request.Query, planData)
+
 	c.JSON(consts.StatusOK, utils.H{
-		"plan":     response.Data.GenerateAnswer,
-		"usage":    response.Data.Usage,
-		"user_id":  request.UserID,
-		"duration": duration.String(),
+		"plan":       response.Data.GenerateAnswer,
+		"usage":      response.Data.Usage,
+		"user_id":    request.UserID,
+		"session_id": session.SessionID,
+		"duration":   duration.String(),
 	})
 }
 
@@ -1017,11 +1187,13 @@ func generatePlanPrompt(resp *viking_db_tool.CollectionSearchKnowledgeResponse) 
 
 	// 计划模式的系统提示词
 	promptBuilder.WriteString(`# 任务
-你是一位专业的项目规划师和任务分解专家。你的任务是根据用户的目标和需求，制定一个详细的执行计划。这些计划的每一步，我会让agent去执行，所以请确保计划的每一步都是可执行的。
+你是一位专业的项目规划师和任务分解专家。你的任务是根据用户的目标和需求，制定一个执行计划,计划尽量简单，并考虑到已有的可使用的工具。这些计划的每一步，我会让agent去执行，所以请确保计划的每一步都是可执行的。
 
 你的计划需要满足以下要求：
 1. 将用户的目标分解为具体的、可执行的步骤
 2. 基于提供的参考资料，确保计划的可行性和准确性
+3. 如果某步骤需要依赖前面的结果，不要将当前步骤分为两个，而是在一步中完成
+4. 最后一步是结论总结员，清晰简洁地总结答案
 
 # 输出格式
 请严格按照以下JSON格式输出执行计划，不要包含任何其他文本：
@@ -1037,6 +1209,9 @@ func generatePlanPrompt(resp *viking_db_tool.CollectionSearchKnowledgeResponse) 
     }
   ],
 }
+
+# 可用工具
+高德mcp server
 
 # 参考资料
 <context>
@@ -1088,6 +1263,7 @@ func handlePlanStep(ctx context.Context, c *app.RequestContext) {
 
 	var request struct {
 		UserID          string `json:"user_id"`
+		SessionID       string `json:"session_id"`
 		StepNumber      int    `json:"step_number"`
 		Title           string `json:"title"`
 		Description     string `json:"description"`
@@ -1110,21 +1286,241 @@ func handlePlanStep(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	log.Printf("INFO: [PLAN_STEP] User %s clicked step %d: %s", request.UserID, request.StepNumber, request.Title)
+	if request.SessionID == "" {
+		log.Printf("ERROR: [PLAN_STEP] Session ID is missing")
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "Session ID is required",
+		})
+		return
+	}
+
+	log.Printf("INFO: [PLAN_STEP] User %s executing step %d: %s (Session: %s)", request.UserID, request.StepNumber, request.Title, request.SessionID)
 	log.Printf("INFO: [PLAN_STEP] Step details - Description: %s, Expected Outcome: %s", request.Description, request.ExpectedOutcome)
+
+	// 获取计划会话
+	session, exists := getPlanSession(request.SessionID)
+	if !exists {
+		log.Printf("ERROR: [PLAN_STEP] Session not found: %s", request.SessionID)
+		c.JSON(consts.StatusNotFound, utils.H{
+			"error": "Session not found. Please regenerate the plan.",
+		})
+		return
+	}
+
+	// 创建步骤结果记录
+	stepResult := StepResult{
+		StepNumber:      request.StepNumber,
+		Title:           request.Title,
+		Description:     request.Description,
+		ExpectedOutcome: request.ExpectedOutcome,
+		ExecutedAt:      time.Now(),
+		Status:          "pending",
+	}
+
+	// 使用 React Agent 执行步骤
+	log.Printf("INFO: [PLAN_STEP] Initializing React Agent for step execution...")
+
+	// 创建 React Agent
+	cfg := &react_agent.Config{}
+	agent, err := react_agent.GetReactAgentWithAllTools(ctx, cfg)
+	if err != nil {
+		log.Printf("ERROR: [PLAN_STEP] Failed to create React Agent: %v", err)
+		stepResult.Status = "failed"
+		stepResult.ExecutionResult = "Failed to initialize React Agent: " + err.Error()
+		session.AddStepResult(stepResult)
+
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "Failed to initialize React Agent: " + err.Error(),
+		})
+		return
+	}
+
+	// 获取前面步骤的执行结果作为上下文
+	previousContext := session.BuildContextWithPreviousResults(request.StepNumber)
+	log.Printf("INFO: [PLAN_STEP] Built context from %d previous steps", len(session.GetPreviousStepResults(request.StepNumber)))
+
+	// 构建执行任务的提示词，包含前面步骤的结果
+	taskPrompt := fmt.Sprintf(`你正在执行一个多步骤计划中的某个步骤。请执行以下任务步骤：
+
+## 当前步骤信息
+步骤 %d: %s
+
+**描述**: %s
+**期望结果**: %s
+
+%s
+
+## 执行指导
+请根据上述描述执行相应的操作，并提供详细的执行结果。注意事项：
+1. 如果需要使用工具来完成任务，请调用相应的工具
+2. 如果前面的步骤结果对当前步骤有帮助，请充分利用这些信息
+3. 避免重复执行前面步骤已经完成的操作
+4. 确保你的执行结果能够为后续步骤提供有用的信息`,
+		request.StepNumber, request.Title, request.Description, request.ExpectedOutcome, previousContext)
+
+	log.Printf("INFO: [PLAN_STEP] Executing step with React Agent...")
+
+	// 使用 React Agent 生成响应
+	message, err := agent.Generate(ctx, []*schema.Message{
+		{
+			Role:    "user",
+			Content: taskPrompt,
+		},
+	})
+
+	if err != nil {
+		log.Printf("ERROR: [PLAN_STEP] React Agent execution failed: %v", err)
+		stepResult.Status = "failed"
+		stepResult.ExecutionResult = "React Agent execution failed: " + err.Error()
+		session.AddStepResult(stepResult)
+
+		c.JSON(consts.StatusInternalServerError, utils.H{
+			"error": "Failed to execute step with React Agent: " + err.Error(),
+		})
+		return
+	}
+
+	// 添加调试信息
+	log.Printf("INFO: [PLAN_STEP] React Agent response - Role: %s, Content: %s", message.Role, message.Content)
+	if message.Content == "" {
+		log.Printf("WARN: [PLAN_STEP] React Agent returned empty content")
+	}
+
+	// 更新步骤结果
+	stepResult.Status = "success"
+	stepResult.ExecutionResult = message.Content
+	session.AddStepResult(stepResult)
 
 	duration := time.Since(startTime)
 	log.Printf("INFO: [PLAN_STEP] Plan step request completed in %v for user %s", duration, request.UserID)
 
 	c.JSON(consts.StatusOK, utils.H{
-		"message": "Step clicked successfully",
+		"message": "Step executed successfully with React Agent",
 		"step_info": utils.H{
 			"step_number":      request.StepNumber,
 			"title":            request.Title,
 			"description":      request.Description,
 			"expected_outcome": request.ExpectedOutcome,
 		},
-		"user_id":  request.UserID,
-		"duration": duration.String(),
+		"execution_result":    message.Content,
+		"previous_steps_used": len(session.GetPreviousStepResults(request.StepNumber)),
+		"user_id":             request.UserID,
+		"session_id":          request.SessionID,
+		"duration":            duration.String(),
+	})
+}
+
+// 获取计划会话状态
+func getPlanSessionStatus(ctx context.Context, c *app.RequestContext) {
+	sessionID := c.Param("session_id")
+	log.Printf("INFO: [PLAN_SESSION_STATUS] Starting plan session status request: %s %s", c.Method(), c.Request.URI().String())
+	startTime := time.Now()
+
+	if sessionID == "" {
+		log.Printf("ERROR: [PLAN_SESSION_STATUS] Session ID is missing")
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "Session ID is required",
+		})
+		return
+	}
+
+	session, exists := getPlanSession(sessionID)
+	if !exists {
+		log.Printf("ERROR: [PLAN_SESSION_STATUS] Session not found: %s", sessionID)
+		c.JSON(consts.StatusNotFound, utils.H{
+			"error": "Session not found",
+		})
+		return
+	}
+
+	log.Printf("INFO: [PLAN_SESSION_STATUS] Getting plan session status for session ID: %s", sessionID)
+
+	c.JSON(consts.StatusOK, utils.H{
+		"session_id":     session.SessionID,
+		"user_id":        session.UserID,
+		"original_query": session.OriginalQuery,
+		"plan_data":      session.PlanData,
+		"step_results":   session.StepResults,
+		"created_at":     session.CreatedAt.Format(time.RFC3339),
+		"updated_at":     session.UpdatedAt.Format(time.RFC3339),
+	})
+
+	duration := time.Since(startTime)
+	log.Printf("INFO: [PLAN_SESSION_STATUS] Plan session status request completed in %v for session %s", duration, sessionID)
+}
+
+// 获取计划步骤上下文
+func getPlanStepContext(ctx context.Context, c *app.RequestContext) {
+	sessionID := c.Param("session_id")
+	stepNumber := c.Param("step_number")
+	log.Printf("INFO: [PLAN_STEP_CONTEXT] Starting plan step context request: %s %s", c.Method(), c.Request.URI().String())
+	startTime := time.Now()
+
+	if sessionID == "" {
+		log.Printf("ERROR: [PLAN_STEP_CONTEXT] Session ID is missing")
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "Session ID is required",
+		})
+		return
+	}
+
+	if stepNumber == "" {
+		log.Printf("ERROR: [PLAN_STEP_CONTEXT] Step number is missing")
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "Step number is required",
+		})
+		return
+	}
+
+	session, exists := getPlanSession(sessionID)
+	if !exists {
+		log.Printf("ERROR: [PLAN_STEP_CONTEXT] Session not found: %s", sessionID)
+		c.JSON(consts.StatusNotFound, utils.H{
+			"error": "Session not found",
+		})
+		return
+	}
+
+	log.Printf("INFO: [PLAN_STEP_CONTEXT] Getting plan step context for session ID: %s, step number: %s", sessionID, stepNumber)
+
+	stepNum, err := strconv.Atoi(stepNumber)
+	if err != nil {
+		log.Printf("ERROR: [PLAN_STEP_CONTEXT] Invalid step number: %s", stepNumber)
+		c.JSON(consts.StatusBadRequest, utils.H{
+			"error": "Invalid step number",
+		})
+		return
+	}
+
+	stepResults := session.GetPreviousStepResults(stepNum)
+	if len(stepResults) == 0 {
+		log.Printf("INFO: [PLAN_STEP_CONTEXT] No previous step results found for session: %s, step: %s", sessionID, stepNumber)
+		c.JSON(consts.StatusOK, utils.H{
+			"context": "",
+		})
+		return
+	}
+
+	var contextBuilder strings.Builder
+	contextBuilder.WriteString("\n\n# 当前计划的前置步骤执行结果\n")
+	contextBuilder.WriteString("以下是当前执行计划中前面已完成步骤的执行结果，你可以参考这些信息来执行当前步骤：\n\n")
+
+	for _, result := range stepResults {
+		contextBuilder.WriteString(fmt.Sprintf("## 步骤 %d: %s\n", result.StepNumber, result.Title))
+		contextBuilder.WriteString(fmt.Sprintf("**步骤描述**: %s\n", result.Description))
+		contextBuilder.WriteString(fmt.Sprintf("**期望成果**: %s\n", result.ExpectedOutcome))
+		contextBuilder.WriteString(fmt.Sprintf("**执行时间**: %s\n", result.ExecutedAt.Format("2006-01-02 15:04:05")))
+		contextBuilder.WriteString(fmt.Sprintf("**实际执行结果**:\n%s\n\n", result.ExecutionResult))
+		contextBuilder.WriteString("---\n\n")
+	}
+
+	contextBuilder.WriteString("请基于以上前置步骤的执行结果来完成当前步骤。如果前面的步骤结果包含了你需要的信息（如数据、文件路径、API响应等），请直接使用这些信息，避免重复执行相同的操作。\n")
+
+	context := contextBuilder.String()
+
+	duration := time.Since(startTime)
+	log.Printf("INFO: [PLAN_STEP_CONTEXT] Plan step context request completed in %v for session %s, step %s", duration, sessionID, stepNumber)
+	c.JSON(consts.StatusOK, utils.H{
+		"context": context,
 	})
 }
