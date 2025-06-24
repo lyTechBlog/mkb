@@ -225,7 +225,7 @@ func main() {
 	}
 	log.Printf("INFO: Upload directory created/verified: %s", uploadDir)
 
-	h := server.Default(server.WithHostPorts("127.0.0.1:80"), server.WithStreamBody(true), server.WithTransport(standard.NewTransporter))
+	h := server.Default(server.WithHostPorts("127.0.0.1:8888"), server.WithStreamBody(true), server.WithTransport(standard.NewTransporter))
 
 	// 配置CORS
 	h.Use(cors.New(cors.Config{
